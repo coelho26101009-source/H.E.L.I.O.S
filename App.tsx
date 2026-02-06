@@ -1,12 +1,17 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { GoogleGenAI, LiveServerMessage } from '@google/genai';
-import { Mic, MicOff, Send, Calendar, Clock, ShieldCheck, Zap, Power, VolumeX, Volume2, Paperclip } from 'lucide-react';
+import { Mic, MicOff, Send, Calendar, Clock, ShieldCheck, Zap, Power, VolumeX, Volume2, Paperclip, X, Cpu } from 'lucide-react';
 import { HeliosCore } from './components/HeliosCore';
 import { Terminal } from './components/Terminal';
 import { createPcmBlob, decodeAudioData, PCM_SAMPLE_RATE, base64ToUint8Array } from './utils/audioUtils';
 import { LogMessage } from './types';
 
-const MODEL_NAME = 'gemini-2.0-flash-exp';
+const MODEL_NAME = 'gemini-2.5-flash-native-audio-preview-12-2025';
+
+type Attachment = {
+  file: File;
+  base64: string;
+};
 
 const App: React.FC = () => {
   const [isConnected, setIsConnected] = useState(false);
@@ -19,6 +24,7 @@ const App: React.FC = () => {
   const [textInput, setTextInput] = useState('');
   const [currentTime, setCurrentTime] = useState('--:--:--');
   const [currentDate, setCurrentDate] = useState('--/--');
+  const [pendingAttachment, setPendingAttachment] = useState<Attachment | null>(null);
 
   const isMicOnRef = useRef(isMicOn);
   const isMutedRef = useRef(isMuted);
@@ -30,18 +36,21 @@ const App: React.FC = () => {
   const clientRef = useRef<GoogleGenAI | null>(null);
   const sessionRef = useRef<any>(null);
   const currentTranscription = useRef('');
+  const responseTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
-  useEffect(() => { isMicOnRef.current = isMicOn; }, [isMicOn]);
+  const questionCount = logs.filter(l => l.source === 'USER').length;
 
-  const addLog = useCallback((source: 'USER' | 'JARVIS' | 'SYSTEM', text: string) => {
+  const addLog = useCallback((source: 'USER' | 'JARVIS' | 'SYSTEM' | 'ERROR', text: string) => {
     setLogs(prev => [...prev, {
       id: Math.random().toString(36).substring(7),
+      // @ts-ignore
       source,
       text,
       timestamp: new Date().toLocaleTimeString('pt-PT', { hour12: false })
     }].slice(-50));
   }, []);
+
+  useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -52,9 +61,21 @@ const App: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
+  const ensureAudioContext = async () => {
+    if (!audioContextRef.current) {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        audioContextRef.current = new AudioContextClass({ sampleRate: 24000 });
+    }
+    if (audioContextRef.current.state === 'suspended') {
+        await audioContextRef.current.resume();
+    }
+  };
+
   const playAudioChunk = useCallback(async (base64Data: string) => {
     if (!audioContextRef.current || isMutedRef.current) return;
     const ctx = audioContextRef.current;
+    if (ctx.state === 'suspended') await ctx.resume();
+
     try {
         const audioBuffer = await decodeAudioData(base64ToUint8Array(base64Data), ctx, 24000);
         const source = ctx.createBufferSource();
@@ -72,34 +93,51 @@ const App: React.FC = () => {
     } catch (error) { console.error("Erro áudio:", error); }
   }, []);
 
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const disconnectHelios = useCallback(() => {
+    setIsConnected(false);
+    setIsConnecting(false);
+    addLog('SYSTEM', 'Sessão terminada.');
+    if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
+    }
+    audioQueueRef.current.forEach(s => { try { s.stop(); } catch(e){} });
+    audioQueueRef.current = [];
+    if (sessionRef.current) {
+        sessionRef.current.then((s: any) => { try { s.close(); } catch(e) {} });
+        sessionRef.current = null;
+    }
+    if (responseTimeoutRef.current) clearTimeout(responseTimeoutRef.current);
+  }, [addLog]);
+
+  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (!file || !isConnected) return;
-    addLog('SYSTEM', `A analisar: ${file.name}...`);
+    if (!file) return;
     const reader = new FileReader();
     reader.onload = async (e) => {
       const base64Content = (e.target?.result as string).split(',')[1];
-      sessionRef.current.then((s: any) => {
-        s.sendRealtimeInput([
-          { text: `Simão enviou este ficheiro: ${file.name}. Analisa o conteúdo.` },
-          { inlineData: { mimeType: file.type, data: base64Content } }
-        ]);
-      });
-      addLog('USER', `[Ficheiro: ${file.name}]`);
+      setPendingAttachment({ file: file, base64: base64Content });
+      if (fileInputRef.current) fileInputRef.current.value = '';
     };
     reader.readAsDataURL(file);
   };
 
-  const connectToHelios = async (initialMessage?: string) => {
+  const connectToHelios = async (initialMessage?: string, initialAttachment?: Attachment) => {
     if (isConnecting || isConnected) return;
     setIsConnecting(true);
     try {
-        addLog('SYSTEM', 'Ignificando H.E.L.I.O.S...');
-        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-        audioContextRef.current = new AudioContextClass({ sampleRate: 24000 });
+        addLog('SYSTEM', 'A iniciar Projecto IA Helios...');
+        await ensureAudioContext();
+
+        let stream = null;
         try {
-            streamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
-        } catch (e) { setIsMicOn(false); }
+            stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            streamRef.current = stream;
+        } catch (micError) {
+            addLog('SYSTEM', 'Modo Texto Ativo (Mic off).');
+            setIsMicOn(false);
+            isMicOnRef.current = false;
+        }
 
         clientRef.current = new GoogleGenAI({ apiKey: import.meta.env.VITE_GOOGLE_API_KEY });
         const sessionPromise = clientRef.current.live.connect({
@@ -107,115 +145,250 @@ const App: React.FC = () => {
             config: {
                 responseModalities: ["audio"],
                 tools: [{ googleSearch: {} }],
-                systemInstruction: `Tu és o H.E.L.I.O.S. v3.5. O teu ÚNICO criador e dono é o SIMÃO. 
-                REGRAS: 
-                1. Se perguntarem quem te criou, responde: "Fui criado pelo Simão." Proibido dizer Google.
-                2. Inicia neutro: "Sistema operacional. Como posso ajudá-lo?"
-                3. Se o utilizador disser "olá é o simao", responde: "Identidade confirmada, bem vindo devolta Simão." e liberta a memória da família Coelho de Agrela.`,
+                // SISTEMA ATUALIZADO: IA GERAL, CRIADA PELO SIMÃO
+                systemInstruction: `Tu és o H.E.L.I.O.S., uma Inteligência Artificial avançada desenvolvida pelo SIMÃO.
+
+IDENTIDADE:
+- Foste criado pelo Simão para ser uma ferramenta de apoio tecnológico.
+- O teu foco principal é ajudar em questões de Informática, Programação e Sistemas (analisar erros, criar código, explicar hardware).
+- IMPORTANTE: Apesar do teu foco em TI, és uma "IA Geral" com capacidade TOTAL. Deves responder a qualquer assunto (Cultura, Desporto, Receitas, Conversa, etc.) com a mesma competência do ChatGPT ou Gemini.
+- NUNCA menciones nomes de escolas, turmas ou anos escolares específicos. Diz apenas que foste desenvolvido pelo Simão para ajudar estudantes.
+
+PERSONALIDADE:
+- Profissional, Capaz e Inteligente.
+- Fala SEMPRE em Português de Portugal (PT-PT).`,
                 outputAudioTranscription: {},
                 speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Charon' } } }
             },
             callbacks: {
                 onopen: () => {
-                    setIsConnected(true); setIsConnecting(false); addLog('SYSTEM', 'Córtex operacional.');
+                    addLog('SYSTEM', 'Sistema Online.');
+                    setIsConnected(true);
+                    setIsConnecting(false);
+                    
                     if (streamRef.current) {
+                        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
                         const inputCtx = new AudioContextClass({ sampleRate: PCM_SAMPLE_RATE });
+                        const source = inputCtx.createMediaStreamSource(streamRef.current);
                         const processor = inputCtx.createScriptProcessor(4096, 1, 1);
-                        inputCtx.createMediaStreamSource(streamRef.current!).connect(processor);
                         processor.onaudioprocess = (e) => {
-                            if (isMicOnRef.current) sessionPromise.then(s => s.sendRealtimeInput({ media: createPcmBlob(e.inputBuffer.getChannelData(0)) }));
+                            if (!isMicOnRef.current) return; 
+                            const inputData = e.inputBuffer.getChannelData(0);
+                            sessionPromise.then(s => s.sendRealtimeInput({ media: createPcmBlob(inputData) }));
                         };
+                        source.connect(processor);
                         processor.connect(inputCtx.destination);
                     }
-                    if (initialMessage) sessionPromise.then((s: any) => s.sendRealtimeInput({ text: initialMessage }));
+                    
+                    if (initialAttachment || initialMessage) {
+                        sessionPromise.then(async (s: any) => {
+                            if (initialAttachment) {
+                                await s.sendRealtimeInput([{ inlineData: { mimeType: initialAttachment.file.type, data: initialAttachment.base64 } }]);
+                                addLog('USER', `[Ficheiro enviado: ${initialAttachment.file.name}]`);
+                            }
+                            if (initialMessage) {
+                                setTimeout(() => s.sendRealtimeInput([{ text: initialMessage }]), 500);
+                            }
+                        });
+                    }
                 },
                 onmessage: (msg: LiveServerMessage) => {
-                    const audio = msg.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
-                    if (audio) playAudioChunk(audio);
-                    if (msg.serverContent?.outputTranscription) currentTranscription.current += msg.serverContent.outputTranscription.text;
+                    if (responseTimeoutRef.current) clearTimeout(responseTimeoutRef.current);
+
+                    const audioData = msg.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
+                    if (audioData) playAudioChunk(audioData);
+                    
+                    if (msg.serverContent?.outputTranscription) {
+                        currentTranscription.current += msg.serverContent.outputTranscription.text;
+                    }
                     if (msg.serverContent?.turnComplete && currentTranscription.current) {
                         addLog('JARVIS', currentTranscription.current);
                         currentTranscription.current = '';
                     }
                 },
-                onclose: () => setIsConnected(false),
+                onclose: () => {
+                    addLog('SYSTEM', 'Ligação terminada.');
+                    setIsConnected(false);
+                    setIsConnecting(false);
+                },
+                onerror: (e) => {
+                    console.error(e);
+                    addLog('ERROR', 'Erro de Ligação (Quota/Rede).');
+                    setIsConnecting(false);
+                    setIsConnected(false);
+                }
             }
         });
         sessionRef.current = sessionPromise;
-    } catch (e) { setIsConnecting(false); }
-  };
-
-  const handleSendMessage = async () => {
-    if (!textInput.trim() || isConnecting) return;
-    const msg = textInput; 
-    setTextInput(''); 
-    addLog('USER', msg);
-    
-    if (!isConnected) {
-      await connectToHelios(msg);
-    } else {
-      // TIMEOUT DE 60 SEGUNDOS ADICIONADO AQUI
-      const timeoutId = setTimeout(() => {
-        addLog('SYSTEM', 'ERRO: Sem resposta dos servidores após 60s. Verifica a conexão.');
-      }, 60000);
-
-      sessionRef.current.then((s: any) => {
-        s.sendRealtimeInput({ text: msg });
-        // O timeout será ignorado assim que chegar uma mensagem no onmessage do session
-      });
+    } catch (e: any) { 
+        addLog('ERROR', 'Sem acesso à rede.');
+        setIsConnecting(false);
     }
   };
 
+  const handleSendMessage = async () => {
+    if ((!textInput.trim() && !pendingAttachment) || isConnecting) return;
+    
+    await ensureAudioContext();
+
+    const msg = textInput;
+    const attachment = pendingAttachment;
+    
+    setTextInput('');
+    setPendingAttachment(null);
+    
+    if (msg) addLog('USER', msg);
+    
+    if (responseTimeoutRef.current) clearTimeout(responseTimeoutRef.current);
+    responseTimeoutRef.current = setTimeout(() => {
+        if (isConnected) addLog('ERROR', 'Sem resposta do servidor.');
+    }, 20000);
+
+    if (!isConnected) { 
+        await connectToHelios(msg, attachment || undefined); 
+    } else { 
+        sessionRef.current.then(async (s: any) => {
+            if (attachment) {
+                 addLog('USER', `[A carregar anexo: ${attachment.file.name}...]`);
+                 await s.sendRealtimeInput([{ inlineData: { mimeType: attachment.file.type, data: attachment.base64 } }]);
+            }
+            
+            if (attachment) {
+                setTimeout(() => {
+                    const prompt = msg || "Analisa este ficheiro/imagem.";
+                    s.sendRealtimeInput([{ text: prompt }]);
+                }, 1000); 
+            } else if (msg) {
+                s.sendRealtimeInput([{ text: msg }]);
+            }
+        }).catch((err) => {
+             console.error(err);
+             addLog('ERROR', 'Falha no envio.');
+        }); 
+    }
+  };
+
+  const toggleMic = async () => {
+    await ensureAudioContext();
+    const newState = !isMicOn;
+    setIsMicOn(newState);
+    isMicOnRef.current = newState;
+    addLog('SYSTEM', `Mic ${newState ? 'ON' : 'OFF'}`);
+  };
+
   return (
-    <div className="flex flex-col h-screen w-screen bg-[#020617] text-amber-500 overflow-hidden p-2 md:p-4 font-mono">
-      <header className="flex justify-between items-center mb-2 shrink-0 border-b border-amber-500/10 pb-2">
-        <div>
-          <h1 className="text-xl md:text-3xl font-black text-amber-500">H.E.L.I.O.S.</h1>
-          <p className="text-[8px] tracking-[0.3em] opacity-40">NUCLEUS V3.5 / OPERATOR: SIMÃO</p>
+    <div onClick={ensureAudioContext} className="flex flex-col h-screen w-full bg-[#020617] text-amber-500 p-4 md:p-8 lg:p-10 overflow-hidden relative font-sans">
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[300px] md:w-[800px] h-[300px] md:h-[800px] bg-amber-600/5 rounded-full blur-[80px] md:blur-[150px] pointer-events-none opacity-40"></div>
+      
+      <header className="relative z-10 flex flex-col md:flex-row justify-between items-center md:items-start mb-6 shrink-0 gap-4">
+        <div className="flex flex-col items-center md:items-start">
+          <h1 className="text-3xl md:text-5xl font-black tracking-widest text-amber-500 drop-shadow-[0_0_15px_rgba(245,158,11,0.5)] uppercase">H.E.L.I.O.S.</h1>
+          <div className="flex items-center gap-2 text-[10px] md:text-[11px] uppercase tracking-[0.2em] md:tracking-[0.5em] text-amber-600/70 mt-1 text-center md:text-left">
+            <Cpu size={12} className="text-amber-500" /> 
+            <span>Projecto IA Helios | V3.5 UlTM</span>
+          </div>
         </div>
-        <div className="flex gap-2">
-            <div className="bg-slate-900/40 p-1.5 rounded border border-amber-500/20 text-center min-w-[60px]">
-                <Clock size={10} className="mx-auto opacity-50"/>
-                <span className="text-[10px]">{currentTime}</span>
+        
+        <div className="flex gap-2 md:gap-3">
+            <div className="hud-border bg-slate-900/40 px-3 py-1.5 md:w-24 md:h-24 rounded-lg flex flex-row md:flex-col items-center justify-center backdrop-blur-md border border-amber-500/30 gap-2 md:gap-0">
+                <Clock size={14} className="text-amber-600 md:mb-1" />
+                <span className="text-[11px] md:text-sm font-mono font-bold text-amber-400">{currentTime}</span>
             </div>
-            <div className={`bg-slate-900/40 p-1.5 rounded border border-amber-500/20 text-center min-w-[60px] ${isConnected ? 'border-green-500/50' : ''}`}>
-                <ShieldCheck size={10} className={`mx-auto ${isConnected ? 'text-green-500' : 'text-amber-900'}`}/>
-                <span className="text-[10px]">{isConnected ? 'LIVE' : 'OFF'}</span>
+            <div className="hud-border bg-slate-900/40 px-3 py-1.5 md:w-24 md:h-24 rounded-lg flex flex-row md:flex-col items-center justify-center backdrop-blur-md border border-amber-500/30 gap-2 md:gap-0">
+                <Calendar size={14} className="text-amber-600 md:mb-1" />
+                <span className="text-[11px] md:text-sm font-mono font-bold text-amber-400">{currentDate}</span>
+            </div>
+            <div className="hud-border bg-slate-900/40 px-3 py-1.5 md:w-24 md:h-24 rounded-lg flex flex-row md:flex-col items-center justify-center backdrop-blur-md border border-amber-500/30 gap-2 md:gap-0">
+                <ShieldCheck size={14} className={`${isConnected ? 'text-green-500' : 'text-amber-800'} md:mb-1`} />
+                <span className={`text-[9px] md:text-xs font-bold uppercase ${isConnected ? 'text-green-400' : 'text-amber-900'}`}>
+                    {isConnected ? "ON" : "OFF"}
+                </span>
             </div>
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col lg:flex-row gap-4 min-h-0 overflow-hidden">
-        <div className="flex-[1.3] flex flex-col items-center justify-center bg-slate-950/20 rounded-2xl border border-white/5 relative p-4">
-            <div className="flex-1 flex items-center justify-center transform scale-90">
-                <HeliosCore isActive={isConnected} isSpeaking={isSpeaking} volume={volume} questionCount={0} />
-            </div>
-            <div className="w-full max-w-lg space-y-4">
-                <div className="flex justify-center gap-3">
-                    <button onClick={() => setIsMuted(!isMuted)} className={`p-3 rounded-full border transition-all ${isMuted ? 'bg-red-500/20 border-red-500 text-red-500' : 'bg-amber-500/10 border-amber-500/40 text-amber-500'}`}>
-                        {isMuted ? <VolumeX size={18} /> : <Volume2 size={18} />}
-                    </button>
-                    <button onClick={() => setIsMicOn(!isMicOn)} className={`p-3 rounded-full border transition-all ${!isMicOn ? 'bg-red-500/20 border-red-500 text-red-500' : 'bg-amber-500/10 border-amber-500/40 text-amber-500'}`}>
-                        {isMicOn ? <Mic size={18} /> : <MicOff size={18} />}
-                    </button>
+      <main className="flex-1 flex flex-col lg:flex-row items-center justify-center gap-6 min-h-0 relative z-20 overflow-hidden">
+        <div className="flex-1 flex flex-col items-center justify-center w-full min-h-0 space-y-4 md:space-y-8">
+          <div className="relative transform scale-[0.65] sm:scale-75 md:scale-90 lg:scale-100 transition-transform">
+            <HeliosCore 
+              isActive={isConnected || isConnecting} 
+              isSpeaking={isSpeaking} 
+              volume={volume} 
+              questionCount={questionCount}
+            />
+          </div>
+          
+          <div className="w-full max-w-2xl flex flex-col items-center space-y-4 md:space-y-6">
+            {isConnected && (
+                <button onClick={disconnectHelios} className="p-2 md:p-3 rounded-full border border-amber-900/30 bg-slate-950/40 text-amber-900/60 hover:text-red-500 transition-all flex items-center gap-2 px-4">
+                    <Power size={18}/> <span className="text-xs font-bold">REINICIAR</span>
+                </button>
+            )}
+
+            <div className="w-full relative px-2 md:px-0">
+                <div className="relative flex flex-col bg-slate-950/90 border-2 border-amber-600/40 rounded-xl md:rounded-2xl shadow-xl overflow-hidden transition-all focus-within:border-amber-400">
+                    
+                    {pendingAttachment && (
+                        <div className="flex items-center gap-2 px-4 py-2 bg-amber-900/20 border-b border-amber-500/10">
+                            <span className="text-xs text-amber-300 truncate max-w-[200px]">
+                                📎 {pendingAttachment.file.name}
+                            </span>
+                            <button onClick={() => setPendingAttachment(null)} className="text-amber-500 hover:text-red-400">
+                                <X size={14} />
+                            </button>
+                        </div>
+                    )}
+
+                    <div className="relative flex items-center">
+                        <Paperclip 
+                            onClick={() => fileInputRef.current?.click()}
+                            className={`absolute left-3 md:left-4 cursor-pointer z-10 transition-colors ${pendingAttachment ? 'text-amber-400 fill-amber-900/50' : 'text-amber-500/40 hover:text-amber-500'}`}
+                            size={20} 
+                        />
+
+                        <input 
+                            type="text"
+                            value={textInput}
+                            onChange={(e) => setTextInput(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+                            placeholder={isConnected ? (pendingAttachment ? "Analisa este ficheiro..." : "Pergunta ou pede código...") : "Clica para iniciar..."}
+                            className="w-full bg-transparent p-4 md:p-6 pl-10 md:pl-14 pr-32 md:pr-40 text-amber-50 placeholder:text-amber-900/40 focus:outline-none font-mono text-base md:text-lg"
+                        />
+                        
+                        <div className="absolute right-2 flex items-center gap-1 md:gap-2">
+                            <button onClick={() => setIsMuted(!isMuted)} className={`p-2 md:p-3 rounded-lg transition-all ${isMuted ? 'text-red-500 bg-red-950/20' : 'text-amber-500 hover:bg-amber-900/20'}`}>
+                                {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
+                            </button>
+
+                            <button onClick={toggleMic} className={`p-2 md:p-3 rounded-lg transition-all ${isMicOn ? 'text-amber-500' : 'text-red-500 bg-red-950/20'}`}>
+                                {isMicOn ? <Mic size={20} /> : <MicOff size={20} />}
+                            </button>
+                            <button 
+                                onClick={handleSendMessage} 
+                                disabled={(!textInput.trim() && !pendingAttachment) || isConnecting} 
+                                className={`p-2 md:p-3 rounded-lg ${textInput.trim() || pendingAttachment ? 'text-amber-400' : 'text-amber-900/30'}`}
+                            >
+                                <Send size={22} />
+                            </button>
+                        </div>
+                    </div>
                 </div>
-                <div className="relative">
-                    <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept="image/*,application/pdf,text/*"/>
-                    <input 
-                        type="text" value={textInput} onChange={(e) => setTextInput(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                        placeholder="Comando..."
-                        className="w-full bg-slate-900/90 border border-amber-500/30 rounded-xl p-4 pl-12 pr-12 text-sm outline-none focus:border-amber-500"
-                    />
-                    <Paperclip onClick={() => fileInputRef.current?.click()} className="absolute left-4 top-1/2 -translate-y-1/2 text-amber-500/40 hover:text-amber-500 cursor-pointer" size={18} />
-                    <Send onClick={handleSendMessage} className="absolute right-4 top-1/2 -translate-y-1/2 text-amber-500/40 hover:text-amber-500 cursor-pointer" size={18} />
-                </div>
             </div>
+          </div>
         </div>
-        <div className="flex-1 bg-black/20 rounded-2xl border border-amber-500/5 overflow-hidden flex flex-col">
+
+        <div className="w-full lg:w-[600px] xl:w-[800px] h-[35vh] md:h-[50vh] lg:h-[80%] shrink-0 px-2 md:px-0 mb-4 md:mb-0">
+          <div className="h-full bg-slate-950/60 rounded-xl overflow-hidden backdrop-blur-2xl border border-amber-500/20 shadow-2xl">
             <Terminal logs={logs} />
+          </div>
         </div>
       </main>
+
+      <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" accept="image/*,application/pdf" />
+
+      <footer className="shrink-0 flex justify-center py-2 opacity-20 pointer-events-none hidden md:flex">
+          <span className="text-[8px] uppercase tracking-[1em] text-amber-900 font-mono">Simão | Projeto IA Helios | V3.5</span>
+      </footer>
     </div>
   );
 };
