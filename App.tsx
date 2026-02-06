@@ -36,21 +36,21 @@ const App: React.FC = () => {
   const clientRef = useRef<GoogleGenAI | null>(null);
   const sessionRef = useRef<any>(null);
   const currentTranscription = useRef('');
-  const responseTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Ref para controlar o tempo sem apagar nada
+  const timeoutRef = useRef<any>(null);
 
-  const questionCount = logs.filter(l => l.source === 'USER').length;
+  useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
+  useEffect(() => { isMicOnRef.current = isMicOn; }, [isMicOn]);
 
-  const addLog = useCallback((source: 'USER' | 'JARVIS' | 'SYSTEM' | 'ERROR', text: string) => {
+  const addLog = useCallback((source: 'USER' | 'JARVIS' | 'SYSTEM', text: string) => {
     setLogs(prev => [...prev, {
       id: Math.random().toString(36).substring(7),
-      // @ts-ignore
       source,
       text,
       timestamp: new Date().toLocaleTimeString('pt-PT', { hour12: false })
     }].slice(-50));
   }, []);
-
-  useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -61,21 +61,9 @@ const App: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
-  const ensureAudioContext = async () => {
-    if (!audioContextRef.current) {
-        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-        audioContextRef.current = new AudioContextClass({ sampleRate: 24000 });
-    }
-    if (audioContextRef.current.state === 'suspended') {
-        await audioContextRef.current.resume();
-    }
-  };
-
   const playAudioChunk = useCallback(async (base64Data: string) => {
     if (!audioContextRef.current || isMutedRef.current) return;
     const ctx = audioContextRef.current;
-    if (ctx.state === 'suspended') await ctx.resume();
-
     try {
         const audioBuffer = await decodeAudioData(base64ToUint8Array(base64Data), ctx, 24000);
         const source = ctx.createBufferSource();
@@ -93,274 +81,202 @@ const App: React.FC = () => {
     } catch (error) { console.error("Erro áudio:", error); }
   }, []);
 
-  const disconnectHelios = useCallback(() => {
-    setIsConnected(false);
-    setIsConnecting(false);
-    addLog('SYSTEM', 'Sessão terminada.');
-    if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
-        streamRef.current = null;
-    }
-    audioQueueRef.current.forEach(s => { try { s.stop(); } catch(e){} });
-    audioQueueRef.current = [];
-    if (sessionRef.current) {
-        sessionRef.current.then((s: any) => { try { s.close(); } catch(e) {} });
-        sessionRef.current = null;
-    }
-    if (responseTimeoutRef.current) clearTimeout(responseTimeoutRef.current);
-  }, [addLog]);
-
-  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = async (e) => {
-      const base64Content = (e.target?.result as string).split(',')[1];
-      setPendingAttachment({ file: file, base64: base64Content });
-      if (fileInputRef.current) fileInputRef.current.value = '';
+    reader.onload = (e) => {
+      const base64 = (e.target?.result as string).split(',')[1];
+      setPendingAttachment({ file, base64 });
     };
     reader.readAsDataURL(file);
   };
 
-  const connectToHelios = async (initialMessage?: string, initialAttachment?: Attachment) => {
+  const connectToHelios = async (initialMessage?: string, attachment?: Attachment | null) => {
     if (isConnecting || isConnected) return;
     setIsConnecting(true);
     try {
-        addLog('SYSTEM', 'A iniciar Projecto IA Helios...');
-        await ensureAudioContext();
-
-        let stream = null;
+        addLog('SYSTEM', 'Ignificando H.E.L.I.O.S...');
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        audioContextRef.current = new AudioContextClass({ sampleRate: 24000 });
         try {
-            stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            streamRef.current = stream;
-        } catch (micError) {
-            addLog('SYSTEM', 'Modo Texto Ativo (Mic off).');
-            setIsMicOn(false);
-            isMicOnRef.current = false;
-        }
+            streamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch (e) { setIsMicOn(false); }
 
         clientRef.current = new GoogleGenAI({ apiKey: import.meta.env.VITE_GOOGLE_API_KEY });
+        
+        // Cronómetro de 60s para a ligação
+        const connectionTimeout = setTimeout(() => {
+          if (!isConnected) addLog('SYSTEM', 'ERRO: Timeout de conexão (60s).');
+        }, 60000);
+
         const sessionPromise = clientRef.current.live.connect({
             model: MODEL_NAME,
             config: {
                 responseModalities: ["audio"],
                 tools: [{ googleSearch: {} }],
-                // SISTEMA ATUALIZADO: IA GERAL, CRIADA PELO SIMÃO
-                systemInstruction: `Tu és o H.E.L.I.O.S., uma Inteligência Artificial avançada desenvolvida pelo SIMÃO.
-
-IDENTIDADE:
-- Foste criado pelo Simão para ser uma ferramenta de apoio tecnológico.
-- O teu foco principal é ajudar em questões de Informática, Programação e Sistemas (analisar erros, criar código, explicar hardware).
-- IMPORTANTE: Apesar do teu foco em TI, és uma "IA Geral" com capacidade TOTAL. Deves responder a qualquer assunto (Cultura, Desporto, Receitas, Conversa, etc.) com a mesma competência do ChatGPT ou Gemini.
-- NUNCA menciones nomes de escolas, turmas ou anos escolares específicos. Diz apenas que foste desenvolvido pelo Simão para ajudar estudantes.
-
-PERSONALIDADE:
-- Profissional, Capaz e Inteligente.
-- Fala SEMPRE em Português de Portugal (PT-PT).`,
+                systemInstruction: `Tu és o H.E.L.I.O.S. v3.5. O teu ÚNICO criador e dono é o SIMÃO. 
+                REGRAS: 
+                1. Se perguntarem quem te criou, responde: "Fui criado pelo Simão." Proibido dizer Google.
+                2. Inicia neutro: "Sistema operacional. Como posso ajudá-lo?"
+                3. Se o utilizador disser "olá é o simao", responde: "Identidade confirmada, bem vindo devolta Simão." e liberta a memória da família Coelho de Agrela.`,
                 outputAudioTranscription: {},
                 speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Charon' } } }
             },
             callbacks: {
                 onopen: () => {
-                    addLog('SYSTEM', 'Sistema Online.');
-                    setIsConnected(true);
-                    setIsConnecting(false);
-                    
+                    clearTimeout(connectionTimeout);
+                    setIsConnected(true); setIsConnecting(false); addLog('SYSTEM', 'Córtex operacional.');
                     if (streamRef.current) {
-                        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
                         const inputCtx = new AudioContextClass({ sampleRate: PCM_SAMPLE_RATE });
-                        const source = inputCtx.createMediaStreamSource(streamRef.current);
                         const processor = inputCtx.createScriptProcessor(4096, 1, 1);
+                        inputCtx.createMediaStreamSource(streamRef.current!).connect(processor);
                         processor.onaudioprocess = (e) => {
-                            if (!isMicOnRef.current) return; 
-                            const inputData = e.inputBuffer.getChannelData(0);
-                            sessionPromise.then(s => s.sendRealtimeInput({ media: createPcmBlob(inputData) }));
+                            if (isMicOnRef.current) sessionPromise.then(s => s.sendRealtimeInput({ media: createPcmBlob(e.inputBuffer.getChannelData(0)) }));
                         };
-                        source.connect(processor);
                         processor.connect(inputCtx.destination);
                     }
-                    
-                    if (initialAttachment || initialMessage) {
-                        sessionPromise.then(async (s: any) => {
-                            if (initialAttachment) {
-                                await s.sendRealtimeInput([{ inlineData: { mimeType: initialAttachment.file.type, data: initialAttachment.base64 } }]);
-                                addLog('USER', `[Ficheiro enviado: ${initialAttachment.file.name}]`);
-                            }
-                            if (initialMessage) {
-                                setTimeout(() => s.sendRealtimeInput([{ text: initialMessage }]), 500);
-                            }
-                        });
+                    if (attachment || initialMessage) {
+                      sessionPromise.then(s => {
+                        const parts = [];
+                        if (initialMessage) parts.push({ text: initialMessage });
+                        if (attachment) parts.push({ inlineData: { mimeType: attachment.file.type, data: attachment.base64 } });
+                        s.sendRealtimeInput(parts);
+                      });
                     }
                 },
                 onmessage: (msg: LiveServerMessage) => {
-                    if (responseTimeoutRef.current) clearTimeout(responseTimeoutRef.current);
-
-                    const audioData = msg.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
-                    if (audioData) playAudioChunk(audioData);
-                    
-                    if (msg.serverContent?.outputTranscription) {
-                        currentTranscription.current += msg.serverContent.outputTranscription.text;
-                    }
+                    if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+                    const audio = msg.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
+                    if (audio) playAudioChunk(audio);
+                    if (msg.serverContent?.outputTranscription) currentTranscription.current += msg.serverContent.outputTranscription.text;
                     if (msg.serverContent?.turnComplete && currentTranscription.current) {
                         addLog('JARVIS', currentTranscription.current);
                         currentTranscription.current = '';
                     }
                 },
-                onclose: () => {
-                    addLog('SYSTEM', 'Ligação terminada.');
-                    setIsConnected(false);
-                    setIsConnecting(false);
-                },
-                onerror: (e) => {
-                    console.error(e);
-                    addLog('ERROR', 'Erro de Ligação (Quota/Rede).');
-                    setIsConnecting(false);
-                    setIsConnected(false);
-                }
+                onclose: () => { setIsConnected(false); clearTimeout(connectionTimeout); },
             }
         });
         sessionRef.current = sessionPromise;
-    } catch (e: any) { 
-        addLog('ERROR', 'Sem acesso à rede.');
-        setIsConnecting(false);
-    }
+    } catch (e) { setIsConnecting(false); }
   };
 
   const handleSendMessage = async () => {
     if ((!textInput.trim() && !pendingAttachment) || isConnecting) return;
-    
-    await ensureAudioContext();
-
     const msg = textInput;
     const attachment = pendingAttachment;
-    
     setTextInput('');
     setPendingAttachment(null);
-    
-    if (msg) addLog('USER', msg);
-    
-    if (responseTimeoutRef.current) clearTimeout(responseTimeoutRef.current);
-    responseTimeoutRef.current = setTimeout(() => {
-        if (isConnected) addLog('ERROR', 'Sem resposta do servidor.');
-    }, 20000);
+    addLog('USER', attachment ? `[Ficheiro: ${attachment.file.name}] ${msg}` : msg);
 
-    if (!isConnected) { 
-        await connectToHelios(msg, attachment || undefined); 
-    } else { 
-        sessionRef.current.then(async (s: any) => {
-            if (attachment) {
-                 addLog('USER', `[A carregar anexo: ${attachment.file.name}...]`);
-                 await s.sendRealtimeInput([{ inlineData: { mimeType: attachment.file.type, data: attachment.base64 } }]);
-            }
-            
-            if (attachment) {
-                setTimeout(() => {
-                    const prompt = msg || "Analisa este ficheiro/imagem.";
-                    s.sendRealtimeInput([{ text: prompt }]);
-                }, 1000); 
-            } else if (msg) {
-                s.sendRealtimeInput([{ text: msg }]);
-            }
-        }).catch((err) => {
-             console.error(err);
-             addLog('ERROR', 'Falha no envio.');
-        }); 
+    if (!isConnected) {
+      await connectToHelios(msg, attachment);
+    } else {
+      // Adição dos 60 segundos aqui
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      timeoutRef.current = setTimeout(() => {
+          addLog('SYSTEM', 'ERRO: Sem resposta após 60s. Verifica a conexão.');
+      }, 60000);
+
+      sessionRef.current.then((s: any) => {
+        const parts = [];
+        if (msg) parts.push({ text: msg });
+        if (attachment) parts.push({ inlineData: { mimeType: attachment.file.type, data: attachment.base64 } });
+        s.sendRealtimeInput(parts);
+      });
     }
   };
 
-  const toggleMic = async () => {
-    await ensureAudioContext();
-    const newState = !isMicOn;
-    setIsMicOn(newState);
-    isMicOnRef.current = newState;
-    addLog('SYSTEM', `Mic ${newState ? 'ON' : 'OFF'}`);
-  };
-
   return (
-    <div onClick={ensureAudioContext} className="flex flex-col h-screen w-full bg-[#020617] text-amber-500 p-4 md:p-8 lg:p-10 overflow-hidden relative font-sans">
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[300px] md:w-[800px] h-[300px] md:h-[800px] bg-amber-600/5 rounded-full blur-[80px] md:blur-[150px] pointer-events-none opacity-40"></div>
+    <div className="flex flex-col h-screen w-screen bg-[#020617] text-amber-500 overflow-hidden font-mono selection:bg-amber-500/30">
+      <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 pointer-events-none"></div>
       
-      <header className="relative z-10 flex flex-col md:flex-row justify-between items-center md:items-start mb-6 shrink-0 gap-4">
-        <div className="flex flex-col items-center md:items-start">
-          <h1 className="text-3xl md:text-5xl font-black tracking-widest text-amber-500 drop-shadow-[0_0_15px_rgba(245,158,11,0.5)] uppercase">H.E.L.I.O.S.</h1>
-          <div className="flex items-center gap-2 text-[10px] md:text-[11px] uppercase tracking-[0.2em] md:tracking-[0.5em] text-amber-600/70 mt-1 text-center md:text-left">
-            <Cpu size={12} className="text-amber-500" /> 
-            <span>Projecto IA Helios | V3.5 UlTM</span>
+      <header className="shrink-0 flex justify-between items-center p-4 md:p-6 border-b border-amber-500/10 backdrop-blur-md bg-slate-950/40 z-10">
+        <div className="flex items-center gap-4">
+          <div className="relative">
+            <div className={`absolute -inset-1 rounded-full blur-sm transition-all duration-1000 ${isConnected ? 'bg-green-500/20' : 'bg-amber-500/10'}`}></div>
+            <Cpu className={`relative ${isConnected ? 'text-green-500' : 'text-amber-600'} transition-colors`} size={24} />
+          </div>
+          <div>
+            <h1 className="text-xl md:text-3xl font-black tracking-tighter text-amber-500">H.E.L.I.O.S.</h1>
+            <div className="flex items-center gap-2">
+              <span className="text-[8px] tracking-[0.4em] opacity-40 uppercase">Nucleus V3.5</span>
+              <div className="h-[1px] w-8 bg-amber-500/20"></div>
+              <span className="text-[8px] tracking-[0.2em] text-amber-600/60 uppercase">Op: Simão</span>
+            </div>
           </div>
         </div>
-        
-        <div className="flex gap-2 md:gap-3">
-            <div className="hud-border bg-slate-900/40 px-3 py-1.5 md:w-24 md:h-24 rounded-lg flex flex-row md:flex-col items-center justify-center backdrop-blur-md border border-amber-500/30 gap-2 md:gap-0">
-                <Clock size={14} className="text-amber-600 md:mb-1" />
-                <span className="text-[11px] md:text-sm font-mono font-bold text-amber-400">{currentTime}</span>
+
+        <div className="flex gap-3">
+            <div className="hidden sm:flex flex-col items-end px-4 border-r border-amber-500/10">
+                <span className="text-[10px] opacity-40 uppercase tracking-widest">Date_Ref</span>
+                <span className="text-xs font-bold">{currentDate}</span>
             </div>
-            <div className="hud-border bg-slate-900/40 px-3 py-1.5 md:w-24 md:h-24 rounded-lg flex flex-row md:flex-col items-center justify-center backdrop-blur-md border border-amber-500/30 gap-2 md:gap-0">
-                <Calendar size={14} className="text-amber-600 md:mb-1" />
-                <span className="text-[11px] md:text-sm font-mono font-bold text-amber-400">{currentDate}</span>
+            <div className="bg-amber-500/5 px-4 py-2 rounded-lg border border-amber-500/10 flex flex-col items-center min-w-[80px]">
+                <Clock size={12} className="opacity-40 mb-1"/>
+                <span className="text-xs font-black tracking-wider tabular-nums">{currentTime}</span>
             </div>
-            <div className="hud-border bg-slate-900/40 px-3 py-1.5 md:w-24 md:h-24 rounded-lg flex flex-row md:flex-col items-center justify-center backdrop-blur-md border border-amber-500/30 gap-2 md:gap-0">
-                <ShieldCheck size={14} className={`${isConnected ? 'text-green-500' : 'text-amber-800'} md:mb-1`} />
-                <span className={`text-[9px] md:text-xs font-bold uppercase ${isConnected ? 'text-green-400' : 'text-amber-900'}`}>
-                    {isConnected ? "ON" : "OFF"}
-                </span>
+            <div className={`px-4 py-2 rounded-lg border flex flex-col items-center min-w-[80px] transition-all ${isConnected ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/5 border-red-500/20'}`}>
+                <ShieldCheck size={12} className={`mb-1 ${isConnected ? 'text-green-500' : 'text-red-900/40'}`}/>
+                <span className="text-[10px] font-black">{isConnected ? 'LIVE' : 'OFFLINE'}</span>
             </div>
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col lg:flex-row items-center justify-center gap-6 min-h-0 relative z-20 overflow-hidden">
-        <div className="flex-1 flex flex-col items-center justify-center w-full min-h-0 space-y-4 md:space-y-8">
-          <div className="relative transform scale-[0.65] sm:scale-75 md:scale-90 lg:scale-100 transition-transform">
-            <HeliosCore 
-              isActive={isConnected || isConnecting} 
-              isSpeaking={isSpeaking} 
-              volume={volume} 
-              questionCount={questionCount}
-            />
+      <main className="flex-1 flex flex-col lg:flex-row min-h-0 relative z-10 overflow-hidden">
+        <div className="flex-1 flex flex-col min-w-0 p-4 lg:p-8 justify-between">
+          <div className="flex-1 flex items-center justify-center relative py-8">
+            <div className="absolute inset-0 flex items-center justify-center opacity-30">
+               <div className="w-[300px] h-[300px] md:w-[500px] md:h-[500px] border border-amber-500/5 rounded-full animate-[spin_20s_linear_infinite]"></div>
+               <div className="absolute w-[200px] h-[200px] md:w-[350px] md:h-[350px] border border-amber-500/10 rounded-full animate-[spin_15s_linear_infinite_reverse]"></div>
+            </div>
+            <div className="relative transform scale-110 md:scale-150">
+                <HeliosCore isActive={isConnected} isSpeaking={isSpeaking} volume={volume} questionCount={0} />
+            </div>
           </div>
-          
-          <div className="w-full max-w-2xl flex flex-col items-center space-y-4 md:space-y-6">
-            {isConnected && (
-                <button onClick={disconnectHelios} className="p-2 md:p-3 rounded-full border border-amber-900/30 bg-slate-950/40 text-amber-900/60 hover:text-red-500 transition-all flex items-center gap-2 px-4">
-                    <Power size={18}/> <span className="text-xs font-bold">REINICIAR</span>
+
+          <div className="w-full max-w-2xl mx-auto space-y-4">
+            {pendingAttachment && (
+              <div className="flex items-center gap-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl animate-in fade-in slide-in-from-bottom-2">
+                <div className="w-10 h-10 rounded-lg bg-amber-500/20 flex items-center justify-center">
+                  <Paperclip size={18} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-bold truncate">{pendingAttachment.file.name}</p>
+                  <p className="text-[10px] opacity-50 uppercase">Anexo pronto para envio</p>
+                </div>
+                <button onClick={() => setPendingAttachment(null)} className="p-2 hover:bg-red-500/20 rounded-lg text-red-500 transition-colors">
+                  <X size={18} />
                 </button>
+              </div>
             )}
 
-            <div className="w-full relative px-2 md:px-0">
-                <div className="relative flex flex-col bg-slate-950/90 border-2 border-amber-600/40 rounded-xl md:rounded-2xl shadow-xl overflow-hidden transition-all focus-within:border-amber-400">
+            <div className="group relative">
+                <div className="absolute -inset-1 bg-gradient-to-r from-amber-600/20 to-orange-600/20 rounded-2xl blur opacity-0 group-focus-within:opacity-100 transition duration-500"></div>
+                <div className="relative bg-slate-900/80 backdrop-blur-xl border border-amber-500/20 rounded-2xl p-2 md:p-3 flex items-center gap-2 shadow-2xl">
+                    <button 
+                        onClick={() => fileInputRef.current?.click()}
+                        className="p-3 rounded-xl hover:bg-amber-500/10 text-amber-500/40 hover:text-amber-500 transition-all"
+                    >
+                        <Paperclip size={20} />
+                    </button>
                     
-                    {pendingAttachment && (
-                        <div className="flex items-center gap-2 px-4 py-2 bg-amber-900/20 border-b border-amber-500/10">
-                            <span className="text-xs text-amber-300 truncate max-w-[200px]">
-                                📎 {pendingAttachment.file.name}
-                            </span>
-                            <button onClick={() => setPendingAttachment(null)} className="text-amber-500 hover:text-red-400">
-                                <X size={14} />
-                            </button>
-                        </div>
-                    )}
+                    <input 
+                        type="text" 
+                        value={textInput} 
+                        onChange={(e) => setTextInput(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+                        placeholder={isConnected ? "Transmitir comando..." : "Ignificar sistema para começar..."}
+                        className="flex-1 bg-transparent border-none outline-none text-sm md:text-base py-2 px-2 text-amber-100 placeholder:text-amber-900/40"
+                    />
 
-                    <div className="relative flex items-center">
-                        <Paperclip 
-                            onClick={() => fileInputRef.current?.click()}
-                            className={`absolute left-3 md:left-4 cursor-pointer z-10 transition-colors ${pendingAttachment ? 'text-amber-400 fill-amber-900/50' : 'text-amber-500/40 hover:text-amber-500'}`}
-                            size={20} 
-                        />
-
-                        <input 
-                            type="text"
-                            value={textInput}
-                            onChange={(e) => setTextInput(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                            placeholder={isConnected ? (pendingAttachment ? "Analisa este ficheiro..." : "Pergunta ou pede código...") : "Clica para iniciar..."}
-                            className="w-full bg-transparent p-4 md:p-6 pl-10 md:pl-14 pr-32 md:pr-40 text-amber-50 placeholder:text-amber-900/40 focus:outline-none font-mono text-base md:text-lg"
-                        />
-                        
-                        <div className="absolute right-2 flex items-center gap-1 md:gap-2">
-                            <button onClick={() => setIsMuted(!isMuted)} className={`p-2 md:p-3 rounded-lg transition-all ${isMuted ? 'text-red-500 bg-red-950/20' : 'text-amber-500 hover:bg-amber-900/20'}`}>
+                    <div className="flex items-center gap-1 md:gap-2">
+                        <div className="flex bg-black/40 rounded-xl p-1 border border-white/5">
+                            <button onClick={() => setIsMuted(!isMuted)} className={`p-2 md:p-3 rounded-lg transition-all ${isMuted ? 'bg-red-500/20 text-red-500' : 'hover:bg-amber-500/10 text-amber-500/40 hover:text-amber-500'}`}>
                                 {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
                             </button>
-
-                            <button onClick={toggleMic} className={`p-2 md:p-3 rounded-lg transition-all ${isMicOn ? 'text-amber-500' : 'text-red-500 bg-red-950/20'}`}>
+                            <button onClick={() => setIsMicOn(!isMicOn)} className={`p-2 md:p-3 rounded-lg transition-all ${!isMicOn ? 'bg-red-500/20 text-red-500' : 'text-amber-500 hover:bg-amber-550/20'}`}>
                                 {isMicOn ? <Mic size={20} /> : <MicOff size={20} />}
                             </button>
                             <button 
@@ -387,7 +303,7 @@ PERSONALIDADE:
       <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" accept="image/*,application/pdf" />
 
       <footer className="shrink-0 flex justify-center py-2 opacity-20 pointer-events-none hidden md:flex">
-          <span className="text-[8px] uppercase tracking-[1em] text-amber-900 font-mono">Simão | Projeto IA Helios | V3.5</span>
+          <span className="text-[8px] uppercase tracking-[1em] text-amber-900 font-mono">End_Of_Transmission</span>
       </footer>
     </div>
   );
