@@ -6,7 +6,7 @@ import { Terminal } from './components/Terminal';
 import { createPcmBlob, decodeAudioData, PCM_SAMPLE_RATE, base64ToUint8Array } from './utils/audioUtils';
 import { LogMessage } from './types';
 
-const MODEL_NAME = 'gemini-2.5-flash-native-audio-preview-12-2025';
+const MODEL_NAME = 'gemini-2.0-flash-exp';
 
 type Attachment = {
   file: File;
