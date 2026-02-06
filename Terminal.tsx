@@ -1,82 +1,158 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { LogMessage } from '../types';
+import { LogMessage } from '../types'; // Certifica-te que o caminho está certo
+import ReactMarkdown from 'react-markdown';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { Copy, Check, Terminal as TerminalIcon, ChevronRight } from 'lucide-react';
 
 interface TerminalProps {
   logs: LogMessage[];
 }
 
-export const Terminal: React.FC<TerminalProps> = ({ logs }) => {
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const [isAutoScrollEnabled, setIsAutoScrollEnabled] = useState(true);
+// Componente para o botão de Copiar
+const CopyButton = ({ text }: { text: string }) => {
+  const [isCopied, setIsCopied] = useState(false);
 
-  const handleScroll = () => {
-    if (!scrollContainerRef.current) return;
-    const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current;
-    const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
-    setIsAutoScrollEnabled(isAtBottom);
+  const handleCopy = () => {
+    navigator.clipboard.writeText(text);
+    setIsCopied(true);
+    setTimeout(() => setIsCopied(false), 2000);
   };
 
+  return (
+    <button 
+      onClick={handleCopy} 
+      className="absolute top-2 right-2 p-1.5 rounded-md bg-white/10 hover:bg-white/20 text-white/70 transition-all flex items-center gap-1.5 text-xs z-10"
+      title="Copiar código"
+    >
+      {isCopied ? (
+        <>
+          <Check size={14} className="text-green-400" />
+          <span className="text-green-400 font-bold">Copiado!</span>
+        </>
+      ) : (
+        <>
+          <Copy size={14} />
+          <span>Copiar</span>
+        </>
+      )}
+    </button>
+  );
+};
+
+export const Terminal: React.FC<TerminalProps> = ({ logs }) => {
+  const endRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll para o fundo sempre que chega mensagem nova
   useEffect(() => {
-    if (isAutoScrollEnabled && scrollContainerRef.current) {
-      const container = scrollContainerRef.current;
-      container.scrollTo({
-        top: container.scrollHeight,
-        behavior: 'smooth'
-      });
-    }
-  }, [logs, isAutoScrollEnabled]);
+    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [logs]);
 
   return (
-    <div className="h-full w-full font-mono text-[16px] overflow-hidden flex flex-col">
-      <div className="bg-amber-950/20 px-4 py-3 border-b border-amber-900/30 flex justify-between items-center shrink-0">
-        <div className="flex flex-col">
-          <span className="text-amber-500 font-bold uppercase tracking-widest text-[12px]">Interface de Comando H.E.L.I.O.S.</span>
-          {!isAutoScrollEnabled && (
-            <span className="text-[10px] text-orange-500 animate-pulse uppercase mt-1">Modo de Leitura Ativo</span>
-          )}
+    <div className="w-full h-full flex flex-col bg-[#0f111a] font-mono text-sm relative overflow-hidden">
+      {/* Barra de Título do Terminal */}
+      <div className="flex items-center justify-between px-4 py-3 bg-[#1a1d2d] border-b border-white/5 shrink-0">
+        <div className="flex items-center gap-2 text-amber-500/80">
+          <TerminalIcon size={16} />
+          <span className="font-bold tracking-wider text-xs uppercase">Helios Output Log</span>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse shadow-[0_0_10px_#22c55e]"></div>
-          <span className="text-amber-700 text-[10px] uppercase tracking-wider font-bold">Encriptação Ativa</span>
+        <div className="flex gap-1.5">
+          <div className="w-2.5 h-2.5 rounded-full bg-red-500/20 border border-red-500/50"></div>
+          <div className="w-2.5 h-2.5 rounded-full bg-amber-500/20 border border-amber-500/50"></div>
+          <div className="w-2.5 h-2.5 rounded-full bg-green-500/20 border border-green-500/50"></div>
         </div>
       </div>
-      
-      <div 
-        ref={scrollContainerRef}
-        onScroll={handleScroll}
-        className="flex-1 overflow-y-auto p-5 space-y-5 custom-scrollbar scroll-smooth"
-      >
+
+      {/* Área de Logs com Scroll */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-6 scrollbar-thin scrollbar-thumb-amber-900/20 scrollbar-track-transparent">
         {logs.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full opacity-30 italic space-y-2">
-            <span className="text-amber-900 text-lg">Aguardando entrada de dados neurais...</span>
+          <div className="h-full flex flex-col items-center justify-center text-white/10 select-none">
+            <TerminalIcon size={48} className="mb-4 opacity-20" />
+            <p className="uppercase tracking-[0.2em] text-xs">A aguardar input...</p>
           </div>
         )}
+
         {logs.map((log) => (
-          <div key={log.id} className="flex flex-col space-y-1.5 border-l-2 border-amber-900/20 pl-4 group transition-all hover:border-amber-500/50">
-            <div className="flex items-center gap-3">
-              <span className="text-[11px] text-amber-900 font-bold">[{log.timestamp}]</span>
-              <span className={`text-[13px] font-black tracking-wider uppercase ${
-                log.source === 'JARVIS' ? 'text-amber-400' : 
-                log.source === 'SYSTEM' ? 'text-orange-500' : 'text-slate-400'
-              }`}>
-                {log.source === 'JARVIS' ? 'HELIOS CORE' : log.source}
-              </span>
+          <div key={log.id} className={`group flex gap-3 ${log.source === 'USER' ? 'flex-row-reverse' : ''} animate-in fade-in slide-in-from-bottom-2 duration-300`}>
+            
+            {/* Ícone/Avatar */}
+            <div className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center border text-[10px] font-bold shadow-lg mt-1
+              ${log.source === 'USER' 
+                ? 'bg-amber-500/10 border-amber-500/30 text-amber-500' 
+                : log.source === 'ERROR'
+                  ? 'bg-red-500/10 border-red-500/30 text-red-500'
+                  : 'bg-cyan-500/10 border-cyan-500/30 text-cyan-500'
+              }`}
+            >
+              {log.source === 'USER' ? 'EU' : log.source === 'ERROR' ? 'ERR' : 'IA'}
             </div>
-            {/* AQUI ESTÁ O TEXTO DAS MENSAGENS AUMENTADO */}
-            <p className="text-amber-50/90 leading-relaxed font-mono text-[17px] tracking-tight break-words group-hover:text-white transition-colors">
-              {log.text}
-            </p>
+
+            {/* Balão de Mensagem */}
+            <div className={`flex flex-col max-w-[85%] ${log.source === 'USER' ? 'items-end' : 'items-start'}`}>
+              <span className="text-[10px] text-white/30 mb-1 px-1 flex items-center gap-1">
+                {log.timestamp} {log.source !== 'USER' && '• H.E.L.I.O.S.'}
+              </span>
+              
+              <div className={`relative px-4 py-3 rounded-2xl border backdrop-blur-sm overflow-hidden
+                ${log.source === 'USER' 
+                  ? 'bg-amber-500/10 border-amber-500/20 text-amber-100 rounded-tr-sm' 
+                  : log.source === 'ERROR'
+                    ? 'bg-red-900/10 border-red-500/20 text-red-200 rounded-tl-sm'
+                    : 'bg-[#1e2235] border-white/10 text-gray-100 rounded-tl-sm w-full'
+                }`}
+              >
+                {/* AQUI ESTÁ A MAGIA: O ReactMarkdown transforma o texto em HTML/Código */}
+                <ReactMarkdown
+                  components={{
+                    // Personalização para blocos de código
+                    code({ node, inline, className, children, ...props }: any) {
+                      const match = /language-(\w+)/.exec(className || '');
+                      
+                      // Se for um bloco de código (com ```linguagem)
+                      return !inline && match ? (
+                        <div className="relative my-4 rounded-lg overflow-hidden border border-white/10 shadow-2xl bg-[#0d0d0d]">
+                          {/* Cabeçalho do Código */}
+                          <div className="flex items-center justify-between px-4 py-2 bg-[#1a1a1a] border-b border-white/5">
+                            <span className="text-xs text-amber-500 font-bold uppercase tracking-wider">
+                              {match[1]} {/* Nome da linguagem (ex: HTML, PYTHON) */}
+                            </span>
+                            <CopyButton text={String(children).replace(/\n$/, '')} />
+                          </div>
+                          
+                          {/* O Código Colorido */}
+                          <SyntaxHighlighter
+                            style={vscDarkPlus} // Tema estilo VS Code
+                            language={match[1]}
+                            PreTag="div"
+                            className="!bg-[#0d0d0d] !p-4 !m-0 !overflow-x-auto text-sm"
+                            {...props}
+                          >
+                            {String(children).replace(/\n$/, '')}
+                          </SyntaxHighlighter>
+                        </div>
+                      ) : (
+                        // Se for código inline (ex: `consolo.log`)
+                        <code className="bg-black/30 px-1.5 py-0.5 rounded text-amber-300 font-mono text-xs border border-amber-500/10" {...props}>
+                          {children}
+                        </code>
+                      );
+                    },
+                    // Personalização de parágrafos para não ficar tudo colado
+                    p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed whitespace-pre-wrap">{children}</p>,
+                    // Personalização de links
+                    a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">{children}</a>,
+                    // Listas
+                    ul: ({ children }) => <ul className="list-disc list-inside ml-2 mb-2 space-y-1">{children}</ul>,
+                    ol: ({ children }) => <ol className="list-decimal list-inside ml-2 mb-2 space-y-1">{children}</ol>,
+                  }}
+                >
+                  {log.text}
+                </ReactMarkdown>
+              </div>
+            </div>
           </div>
         ))}
-        
-        {!isAutoScrollEnabled && logs.length > 0 && (
-          <button 
-            onClick={() => setIsAutoScrollEnabled(true)}
-            className="sticky bottom-2 left-1/2 -translate-x-1/2 bg-amber-600/30 hover:bg-amber-500/50 border border-amber-500/50 text-amber-400 text-[10px] px-4 py-2 rounded-full backdrop-blur-lg transition-all shadow-2xl uppercase tracking-widest font-bold"
-          >
-            Voltar ao tempo real
-          </button>
-        )}
+        <div ref={endRef} />
       </div>
     </div>
   );
