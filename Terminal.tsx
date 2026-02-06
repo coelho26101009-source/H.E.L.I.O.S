@@ -1,15 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { LogMessage } from '../types'; // Certifica-te que o caminho está certo
+import { LogMessage } from '../types';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { Copy, Check, Terminal as TerminalIcon, ChevronRight } from 'lucide-react';
+import { Copy, Check, Terminal as TerminalIcon } from 'lucide-react';
 
 interface TerminalProps {
   logs: LogMessage[];
 }
 
-// Componente para o botão de Copiar
 const CopyButton = ({ text }: { text: string }) => {
   const [isCopied, setIsCopied] = useState(false);
 
@@ -43,14 +42,12 @@ const CopyButton = ({ text }: { text: string }) => {
 export const Terminal: React.FC<TerminalProps> = ({ logs }) => {
   const endRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll para o fundo sempre que chega mensagem nova
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs]);
 
   return (
     <div className="w-full h-full flex flex-col bg-[#0f111a] font-mono text-sm relative overflow-hidden">
-      {/* Barra de Título do Terminal */}
       <div className="flex items-center justify-between px-4 py-3 bg-[#1a1d2d] border-b border-white/5 shrink-0">
         <div className="flex items-center gap-2 text-amber-500/80">
           <TerminalIcon size={16} />
@@ -63,7 +60,6 @@ export const Terminal: React.FC<TerminalProps> = ({ logs }) => {
         </div>
       </div>
 
-      {/* Área de Logs com Scroll */}
       <div className="flex-1 overflow-y-auto p-4 space-y-6 scrollbar-thin scrollbar-thumb-amber-900/20 scrollbar-track-transparent">
         {logs.length === 0 && (
           <div className="h-full flex flex-col items-center justify-center text-white/10 select-none">
@@ -74,76 +70,42 @@ export const Terminal: React.FC<TerminalProps> = ({ logs }) => {
 
         {logs.map((log) => (
           <div key={log.id} className={`group flex gap-3 ${log.source === 'USER' ? 'flex-row-reverse' : ''} animate-in fade-in slide-in-from-bottom-2 duration-300`}>
-            
-            {/* Ícone/Avatar */}
             <div className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center border text-[10px] font-bold shadow-lg mt-1
-              ${log.source === 'USER' 
-                ? 'bg-amber-500/10 border-amber-500/30 text-amber-500' 
-                : log.source === 'ERROR'
-                  ? 'bg-red-500/10 border-red-500/30 text-red-500'
-                  : 'bg-cyan-500/10 border-cyan-500/30 text-cyan-500'
-              }`}
+              ${log.source === 'USER' ? 'bg-amber-500/10 border-amber-500/30 text-amber-500' : 
+                log.source === 'ERROR' ? 'bg-red-500/10 border-red-500/30 text-red-500' : 
+                'bg-cyan-500/10 border-cyan-500/30 text-cyan-500'}`}
             >
               {log.source === 'USER' ? 'EU' : log.source === 'ERROR' ? 'ERR' : 'IA'}
             </div>
 
-            {/* Balão de Mensagem */}
             <div className={`flex flex-col max-w-[85%] ${log.source === 'USER' ? 'items-end' : 'items-start'}`}>
               <span className="text-[10px] text-white/30 mb-1 px-1 flex items-center gap-1">
                 {log.timestamp} {log.source !== 'USER' && '• H.E.L.I.O.S.'}
               </span>
               
-              <div className={`relative px-4 py-3 rounded-2xl border backdrop-blur-sm overflow-hidden
-                ${log.source === 'USER' 
-                  ? 'bg-amber-500/10 border-amber-500/20 text-amber-100 rounded-tr-sm' 
-                  : log.source === 'ERROR'
-                    ? 'bg-red-900/10 border-red-500/20 text-red-200 rounded-tl-sm'
-                    : 'bg-[#1e2235] border-white/10 text-gray-100 rounded-tl-sm w-full'
-                }`}
+              <div className={`relative px-4 py-3 rounded-2xl border backdrop-blur-sm overflow-hidden w-full
+                ${log.source === 'USER' ? 'bg-amber-500/10 border-amber-500/20 text-amber-100 rounded-tr-sm' : 
+                  log.source === 'ERROR' ? 'bg-red-900/10 border-red-500/20 text-red-200 rounded-tl-sm' : 
+                  'bg-[#1e2235] border-white/10 text-gray-100 rounded-tl-sm'}`}
               >
-                {/* AQUI ESTÁ A MAGIA: O ReactMarkdown transforma o texto em HTML/Código */}
                 <ReactMarkdown
                   components={{
-                    // Personalização para blocos de código
                     code({ node, inline, className, children, ...props }: any) {
                       const match = /language-(\w+)/.exec(className || '');
-                      
-                      // Se for um bloco de código (com ```linguagem)
                       return !inline && match ? (
                         <div className="relative my-4 rounded-lg overflow-hidden border border-white/10 shadow-2xl bg-[#0d0d0d]">
-                          {/* Cabeçalho do Código */}
                           <div className="flex items-center justify-between px-4 py-2 bg-[#1a1a1a] border-b border-white/5">
-                            <span className="text-xs text-amber-500 font-bold uppercase tracking-wider">
-                              {match[1]} {/* Nome da linguagem (ex: HTML, PYTHON) */}
-                            </span>
+                            <span className="text-xs text-amber-500 font-bold uppercase tracking-wider">{match[1]}</span>
                             <CopyButton text={String(children).replace(/\n$/, '')} />
                           </div>
-                          
-                          {/* O Código Colorido */}
-                          <SyntaxHighlighter
-                            style={vscDarkPlus} // Tema estilo VS Code
-                            language={match[1]}
-                            PreTag="div"
-                            className="!bg-[#0d0d0d] !p-4 !m-0 !overflow-x-auto text-sm"
-                            {...props}
-                          >
+                          <SyntaxHighlighter style={vscDarkPlus} language={match[1]} PreTag="div" className="!bg-[#0d0d0d] !p-4 !m-0 !overflow-x-auto text-sm" {...props}>
                             {String(children).replace(/\n$/, '')}
                           </SyntaxHighlighter>
                         </div>
                       ) : (
-                        // Se for código inline (ex: `consolo.log`)
-                        <code className="bg-black/30 px-1.5 py-0.5 rounded text-amber-300 font-mono text-xs border border-amber-500/10" {...props}>
-                          {children}
-                        </code>
+                        <code className="bg-black/30 px-1.5 py-0.5 rounded text-amber-300 font-mono text-xs border border-amber-500/10" {...props}>{children}</code>
                       );
-                    },
-                    // Personalização de parágrafos para não ficar tudo colado
-                    p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed whitespace-pre-wrap">{children}</p>,
-                    // Personalização de links
-                    a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">{children}</a>,
-                    // Listas
-                    ul: ({ children }) => <ul className="list-disc list-inside ml-2 mb-2 space-y-1">{children}</ul>,
-                    ol: ({ children }) => <ol className="list-decimal list-inside ml-2 mb-2 space-y-1">{children}</ol>,
+                    }
                   }}
                 >
                   {log.text}
