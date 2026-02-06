@@ -6,7 +6,7 @@ import { Terminal } from './components/Terminal';
 import { createPcmBlob, decodeAudioData, PCM_SAMPLE_RATE, base64ToUint8Array } from './utils/audioUtils';
 import { LogMessage } from './types';
 
-const MODEL_NAME = 'gemini-2.5-flash-native-audio-preview-12-2025';
+const MODEL_NAME = 'gemini-2.0-flash-exp';
 
 const App: React.FC = () => {
   const [isConnected, setIsConnected] = useState(false);
@@ -147,9 +147,23 @@ const App: React.FC = () => {
 
   const handleSendMessage = async () => {
     if (!textInput.trim() || isConnecting) return;
-    const msg = textInput; setTextInput(''); addLog('USER', msg);
-    if (!isConnected) await connectToHelios(msg);
-    else sessionRef.current.then((s: any) => s.sendRealtimeInput({ text: msg }));
+    const msg = textInput; 
+    setTextInput(''); 
+    addLog('USER', msg);
+    
+    if (!isConnected) {
+      await connectToHelios(msg);
+    } else {
+      // TIMEOUT DE 60 SEGUNDOS ADICIONADO AQUI
+      const timeoutId = setTimeout(() => {
+        addLog('SYSTEM', 'ERRO: Sem resposta dos servidores após 60s. Verifica a conexão.');
+      }, 60000);
+
+      sessionRef.current.then((s: any) => {
+        s.sendRealtimeInput({ text: msg });
+        // O timeout será ignorado assim que chegar uma mensagem no onmessage do session
+      });
+    }
   };
 
   return (
