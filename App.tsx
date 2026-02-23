@@ -146,17 +146,7 @@ const App: React.FC = () => {
                 responseModalities: ["audio"],
                 tools: [{ googleSearch: {} }],
                 // SISTEMA ATUALIZADO: IA GERAL, CRIADA PELO SIMÃO
-                systemInstruction: `Tu és o H.E.L.I.O.S., uma Inteligência Artificial avançada desenvolvida pelo SIMÃO.
-
-IDENTIDADE:
-- Foste criado pelo Simão para ser uma ferramenta de apoio tecnológico.
-- O teu foco principal é ajudar em questões de Informática, Programação e Sistemas (analisar erros, criar código, explicar hardware).
-- IMPORTANTE: Apesar do teu foco em TI, és uma "IA Geral" com capacidade TOTAL. Deves responder a qualquer assunto (Cultura, Desporto, Receitas, Conversa, etc.) com a mesma competência do ChatGPT ou Gemini.
-- NUNCA menciones nomes de escolas, turmas ou anos escolares específicos. Diz apenas que foste desenvolvido pelo Simão para ajudar estudantes.
-
-PERSONALIDADE:
-- Profissional, Capaz e Inteligente.
-- Fala SEMPRE em Português de Portugal (PT-PT).`,
+                systemInstruction: `Tu és o H.E.L.I.O.S., uma Inteligência Artificial avançada desenvolvida pelo SIMÃO.\n\nIDENTIDADE:\n- Foste criado pelo Simão para ser uma ferramenta de apoio tecnológico.\n- O teu foco principal é ajudar em questões de Informática, Programação e Sistemas (analisar erros, criar código, explicar hardware).\n- IMPORTANTE: Apesar do teu foco em TI, és uma "IA Geral" com capacidade TOTAL. Deves responder a qualquer assunto (Cultura, Desporto, Receitas, Conversa, etc.) com a mesma competência do ChatGPT ou Gemini.\n- NUNCA menciones nomes de escolas, turmas ou anos escolares específicos. Diz apenas que foste desenvolvido pelo Simão para ajudar estudantes.\n\nPERSONALIDADE:\n- Profissional, Capaz e Inteligente.\n- Fala SEMPRE em Português de Portugal (PT-PT).`,
                 outputAudioTranscription: {},
                 speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Charon' } } }
             },
@@ -174,7 +164,7 @@ PERSONALIDADE:
                         processor.onaudioprocess = (e) => {
                             if (!isMicOnRef.current) return; 
                             const inputData = e.inputBuffer.getChannelData(0);
-                            sessionPromise.then(s => s.sendRealtimeInput({ media: createPcmBlob(inputData) }));
+                            sessionPromise.then(s => s.send({ realtimeInput: { mediaChunks: [{ mimeType: "audio/pcm;rate=24000", data: createPcmBlob(inputData) }] } }));
                         };
                         source.connect(processor);
                         processor.connect(inputCtx.destination);
@@ -183,11 +173,11 @@ PERSONALIDADE:
                     if (initialAttachment || initialMessage) {
                         sessionPromise.then(async (s: any) => {
                             if (initialAttachment) {
-                                await s.sendRealtimeInput([{ inlineData: { mimeType: initialAttachment.file.type, data: initialAttachment.base64 } }]);
+                                await s.send({ clientContent: { turns: [{ role: "user", parts: [{ inlineData: { mimeType: initialAttachment.file.type, data: initialAttachment.base64 } }] }], turnComplete: true } });
                                 addLog('USER', `[Ficheiro enviado: ${initialAttachment.file.name}]`);
                             }
                             if (initialMessage) {
-                                setTimeout(() => s.sendRealtimeInput([{ text: initialMessage }]), 500);
+                                setTimeout(() => s.send({ clientContent: { turns: [{ role: "user", parts: [{ text: initialMessage }] }], turnComplete: true } }), 500);
                             }
                         });
                     }
@@ -250,16 +240,16 @@ PERSONALIDADE:
         sessionRef.current.then(async (s: any) => {
             if (attachment) {
                  addLog('USER', `[A carregar anexo: ${attachment.file.name}...]`);
-                 await s.sendRealtimeInput([{ inlineData: { mimeType: attachment.file.type, data: attachment.base64 } }]);
+                 await s.send({ clientContent: { turns: [{ role: "user", parts: [{ inlineData: { mimeType: attachment.file.type, data: attachment.base64 } }] }], turnComplete: true } });
             }
             
             if (attachment) {
                 setTimeout(() => {
                     const prompt = msg || "Analisa este ficheiro/imagem.";
-                    s.sendRealtimeInput([{ text: prompt }]);
+                    s.send({ clientContent: { turns: [{ role: "user", parts: [{ text: prompt }] }], turnComplete: true } });
                 }, 1000); 
             } else if (msg) {
-                s.sendRealtimeInput([{ text: msg }]);
+                s.send({ clientContent: { turns: [{ role: "user", parts: [{ text: msg }] }], turnComplete: true } });
             }
         }).catch((err) => {
              console.error(err);
