@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { GoogleGenAI, LiveServerMessage } from '@google/genai';
-import { Mic, MicOff, Send, Calendar, Clock, ShieldCheck, Zap, Power, VolumeX, Volume2, Paperclip, X, Cpu } from 'lucide-react';
+import { Mic, MicOff, Send, Calendar, Clock, ShieldCheck, Power, VolumeX, Volume2, Paperclip, X, Cpu } from 'lucide-react';
 import { HeliosCore } from './components/HeliosCore';
 import { Terminal } from './components/Terminal';
 import { decodeAudioData, PCM_SAMPLE_RATE, base64ToUint8Array, floatTo16BitPcmBase64 } from './utils/audioUtils';
@@ -12,7 +12,8 @@ interface LogMessage {
   timestamp: string;
 }
 
-const MODEL_NAME = 'gemini-2.0-flash-exp';
+// CORREÇÃO 1: Adicionado o prefixo "models/" exigido pela API Live
+const MODEL_NAME = 'models/gemini-2.0-flash-exp';
 
 type Attachment = { file: File; base64: string; };
 
@@ -138,15 +139,16 @@ const App: React.FC = () => {
         }
 
         clientRef.current = new GoogleGenAI({ apiKey: import.meta.env.VITE_GOOGLE_API_KEY });
+        
+        console.log("A iniciar ligação com o servidor da Google...");
+        
         const sessionPromise = clientRef.current.live.connect({
             model: MODEL_NAME,
             config: {
+                // CORREÇÃO 2: Removido o googleSearch para não bloquear a sessão e simplificar o Setup
                 systemInstruction: {
-                    parts: [{ text: `Tu és o H.E.L.I.O.S., uma Inteligência Artificial avançada desenvolvida pelo SIMÃO. Responde sempre em Português de Portugal.
-                    IDENTIDADE: Foste criado pelo Simão para ser uma ferramenta de apoio tecnológico. O teu foco é Informática, mas tens capacidade TOTAL.` }]
+                    parts: [{ text: `Tu és o H.E.L.I.O.S., uma IA avançada. Responde sempre em Português de Portugal. Foste criado pelo Simão.` }]
                 },
-                tools: [{ googleSearch: {} }],
-                // A CONFIGURAÇÃO EXATA E OBRIGATÓRIA PARA A GOOGLE TE RESPONDER!
                 generationConfig: {
                     responseModalities: ["AUDIO"],
                     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Charon' } } }
@@ -154,6 +156,7 @@ const App: React.FC = () => {
             },
             callbacks: {
                 onopen: () => {
+                    console.log("✅ WebSocket aberto. A aguardar Setup Complete...");
                     addLog('SYSTEM', 'Sistema Online.');
                     setIsConnected(true);
                     setIsConnecting(false);
@@ -169,7 +172,6 @@ const App: React.FC = () => {
                             const base64Audio = floatTo16BitPcmBase64(inputData);
                             
                             sessionPromise.then(s => {
-                                // O método OBRIGATÓRIO é este: s.send({ realtimeInput: ... })
                                 s.send({ realtimeInput: { mediaChunks: [{ mimeType: "audio/pcm;rate=24000", data: base64Audio }] } });
                             }).catch(() => {});
                         };
@@ -182,6 +184,7 @@ const App: React.FC = () => {
                             if (initialAttachment) parts.push({ inlineData: { mimeType: initialAttachment.file.type, data: initialAttachment.base64 } });
                             if (initialMessage) parts.push({ text: initialMessage });
                             if (parts.length > 0) {
+                                console.log("A enviar payload inicial:", parts);
                                 s.send({ clientContent: { turns: [{ role: "user", parts: parts }], turnComplete: true } });
                             }
                         });
@@ -189,6 +192,9 @@ const App: React.FC = () => {
                 },
                 onmessage: (msg: LiveServerMessage) => {
                     if (responseTimeoutRef.current) clearTimeout(responseTimeoutRef.current);
+                    
+                    // ISTO VAI MOSTRAR-NOS EXATAMENTE O QUE O SERVIDOR ESTÁ A FAZER
+                    console.log("📩 MENSAGEM DO SERVIDOR:", msg);
                     
                     if (msg.setupComplete) {
                         console.log("🔥 A GOOGLE ACEITOU A SESSÃO: H.E.L.I.O.S. ACORDOU!");
@@ -207,8 +213,12 @@ const App: React.FC = () => {
                         }
                     }
                 },
-                onclose: () => disconnectHelios(),
+                onclose: () => {
+                    console.log("❌ WebSocket fechado.");
+                    disconnectHelios();
+                },
                 onerror: (e) => {
+                    console.error("❌ ERRO NO WEBSOCKET:", e);
                     addLog('ERROR', 'Erro de Ligação.');
                     setIsConnecting(false);
                     setIsConnected(false);
@@ -248,9 +258,10 @@ const App: React.FC = () => {
             if (msg) parts.push({ text: msg });
             else if (attachment) parts.push({ text: "Analisa este ficheiro/imagem." });
 
-            // O MÉTODO OBRIGATÓRIO PARA TEXTO/ANEXOS É O s.send({ clientContent: ... })
+            console.log("A enviar nova mensagem:", parts);
             s.send({ clientContent: { turns: [{ role: "user", parts: parts }], turnComplete: true } });
-        }).catch(() => {
+        }).catch((e) => {
+             console.error("Falha no envio local:", e);
              addLog('ERROR', 'Falha no envio.');
         }); 
     }
