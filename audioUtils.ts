@@ -1,57 +1,47 @@
+export const PCM_SAMPLE_RATE = 24000;
 
-import { Blob } from '@google/genai';
-
-export const PCM_SAMPLE_RATE = 16000;
-export const OUTPUT_SAMPLE_RATE = 24000;
-
-export function base64ToUint8Array(base64: string): Uint8Array {
+export const base64ToUint8Array = (base64: string) => {
   const binaryString = atob(base64);
-  const len = binaryString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
     bytes[i] = binaryString.charCodeAt(i);
   }
   return bytes;
-}
+};
 
-export function arrayBufferToBase64(buffer: ArrayBuffer): string {
+export const createPcmBlob = (channelData: Float32Array) => {
+  const pcm16 = new Int16Array(channelData.length);
+  for (let i = 0; i < channelData.length; i++) {
+    const s = Math.max(-1, Math.min(1, channelData[i]));
+    pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+  }
+  return new Blob([pcm16], { type: 'audio/pcm' });
+};
+
+export const decodeAudioData = async (
+  audioData: Uint8Array,
+  audioContext: AudioContext,
+  sampleRate: number = 24000
+): Promise<AudioBuffer> => {
+  const audioBuffer = audioContext.createBuffer(1, audioData.length, sampleRate);
+  const channelData = audioBuffer.getChannelData(0);
+  for (let i = 0; i < audioData.length; i++) {
+    const int16 = (audioData[2 * i + 1] << 8) | audioData[2 * i];
+    channelData[i] = int16 / 32768.0; 
+  }
+  return audioBuffer;
+};
+export const floatTo16BitPcmBase64 = (input: Float32Array): string => {
+  const buffer = new ArrayBuffer(input.length * 2);
+  const view = new DataView(buffer);
+  for (let i = 0; i < input.length; i++) {
+    let s = Math.max(-1, Math.min(1, input[i]));
+    view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true); // Little-endian
+  }
   let binary = '';
   const bytes = new Uint8Array(buffer);
-  const len = bytes.byteLength;
-  for (let i = 0; i < len; i++) {
+  for (let i = 0; i < bytes.byteLength; i++) {
     binary += String.fromCharCode(bytes[i]);
   }
   return btoa(binary);
-}
-
-export async function decodeAudioData(
-  data: Uint8Array,
-  ctx: AudioContext,
-  sampleRate: number = OUTPUT_SAMPLE_RATE,
-  numChannels: number = 1
-): Promise<AudioBuffer> {
-  const dataInt16 = new Int16Array(data.buffer);
-  const frameCount = dataInt16.length / numChannels;
-  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
-
-  for (let channel = 0; channel < numChannels; channel++) {
-    const channelData = buffer.getChannelData(channel);
-    for (let i = 0; i < frameCount; i++) {
-      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
-    }
-  }
-  return buffer;
-}
-
-// Fix: Encode raw PCM data into a base64 string within a Blob object for the Live API.
-export function createPcmBlob(data: Float32Array): Blob {
-  const l = data.length;
-  const int16 = new Int16Array(l);
-  for (let i = 0; i < l; i++) {
-    int16[i] = data[i] * 32768;
-  }
-  return {
-    data: arrayBufferToBase64(int16.buffer),
-    mimeType: 'audio/pcm;rate=16000',
-  };
-}
+};

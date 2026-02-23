@@ -3,8 +3,14 @@ import { GoogleGenAI, LiveServerMessage } from '@google/genai';
 import { Mic, MicOff, Send, Calendar, Clock, ShieldCheck, Zap, Power, VolumeX, Volume2, Paperclip, X, Cpu } from 'lucide-react';
 import { HeliosCore } from './components/HeliosCore';
 import { Terminal } from './components/Terminal';
-import { createPcmBlob, decodeAudioData, PCM_SAMPLE_RATE, base64ToUint8Array } from './utils/audioUtils';
-import { LogMessage } from './types';
+import { decodeAudioData, PCM_SAMPLE_RATE, base64ToUint8Array, floatTo16BitPcmBase64 } from './utils/audioUtils';
+
+interface LogMessage {
+  id: string;
+  source: 'USER' | 'JARVIS' | 'SYSTEM' | 'ERROR';
+  text: string;
+  timestamp: string;
+}
 
 const MODEL_NAME = 'gemini-2.0-flash-exp';
 
@@ -36,14 +42,13 @@ const App: React.FC = () => {
   const clientRef = useRef<GoogleGenAI | null>(null);
   const sessionRef = useRef<any>(null);
   const currentTranscription = useRef('');
-  const responseTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const responseTimeoutRef = useRef<any>(null);
 
   const questionCount = logs.filter(l => l.source === 'USER').length;
 
   const addLog = useCallback((source: 'USER' | 'JARVIS' | 'SYSTEM' | 'ERROR', text: string) => {
     setLogs(prev => [...prev, {
       id: Math.random().toString(36).substring(7),
-      // @ts-ignore
       source,
       text,
       timestamp: new Date().toLocaleTimeString('pt-PT', { hour12: false })
@@ -143,79 +148,81 @@ const App: React.FC = () => {
         const sessionPromise = clientRef.current.live.connect({
             model: MODEL_NAME,
             config: {
-                // CORREÇÃO 1: AUDIO em Maiúsculas
-                responseModalities: ["AUDIO"],
+                // Configuração das instruções do sistema atualizada para o formato correto
+                systemInstruction: {
+                    parts: [{ text: `Tu és o H.E.L.I.O.S., uma Inteligência Artificial avançada desenvolvida pelo SIMÃO. Responde sempre em Português de Portugal.
+                    IDENTIDADE:
+                    - Foste criado pelo Simão para ser uma ferramenta de apoio tecnológico.
+                    - O teu foco principal é ajudar em questões de Informática, Programação e Sistemas.
+                    - IMPORTANTE: Apesar do teu foco em TI, és uma "IA Geral" com capacidade TOTAL. Deves responder a qualquer assunto com a mesma competência.
+                    - NUNCA menciones nomes de escolas, turmas ou anos escolares específicos. Diz apenas que foste desenvolvido pelo Simão para ajudar estudantes.
+                    PERSONALIDADE:
+                    - Profissional, Capaz e Inteligente.
+                    - Fala SEMPRE em Português de Portugal (PT-PT).` }]
+                },
                 tools: [{ googleSearch: {} }],
-                // CORREÇÃO 2: Estrutura da instrução
-                systemInstruction: { parts: [{ text: `Tu és o H.E.L.I.O.S., uma Inteligência Artificial avançada desenvolvida pelo SIMÃO.\n\nIDENTIDADE:\n- Foste criado pelo Simão para ser uma ferramenta de apoio tecnológico.\n- O teu foco principal é ajudar em questões de Informática, Programação e Sistemas.\n- IMPORTANTE: És uma "IA Geral" com capacidade TOTAL.\n- Fala SEMPRE em Português de Portugal (PT-PT).` }] },
-                speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Charon' } } }
+                // AS MODALIDADES TÊM DE ESTAR AQUI:
+                generationConfig: {
+                    responseModalities: ["AUDIO"],
+                    speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Charon' } } }
+                }
             },
             callbacks: {
                 onopen: () => {
                     addLog('SYSTEM', 'Sistema Online.');
                     setIsConnected(true);
                     setIsConnecting(false);
-                    
                     if (streamRef.current) {
                         const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
                         const inputCtx = new AudioContextClass({ sampleRate: PCM_SAMPLE_RATE });
                         const source = inputCtx.createMediaStreamSource(streamRef.current);
                         const processor = inputCtx.createScriptProcessor(4096, 1, 1);
                         processor.onaudioprocess = (e) => {
-                            if (!isMicOnRef.current) return; 
+                            if (!isMicOnRef.current || !isConnected) return; 
                             const inputData = e.inputBuffer.getChannelData(0);
-                            sessionPromise.then(s => s.send({ realtimeInput: { mediaChunks: [{ mimeType: "audio/pcm;rate=24000", data: createPcmBlob(inputData) }] } }));
+                            
+                            // AQUI ESTÁ A FUNÇÃO CORRETA EM BASE64 QUE CRIÁMOS!
+                            const base64Audio = floatTo16BitPcmBase64(inputData);
+                            
+                            sessionPromise.then(s => {
+                                if (s && s.ws && s.ws.readyState === 1) {
+                                    // AQUI USAMOS O MÉTODO NOVO s.send()
+                                    s.send({ realtimeInput: { mediaChunks: [{ mimeType: "audio/pcm;rate=24000", data: base64Audio }] } });
+                                }
+                            });
                         };
                         source.connect(processor);
                         processor.connect(inputCtx.destination);
                     }
-                    
                     if (initialAttachment || initialMessage) {
                         sessionPromise.then(async (s: any) => {
-                            if (initialAttachment) {
-                                await s.send({ clientContent: { turns: [{ role: "user", parts: [{ inlineData: { mimeType: initialAttachment.file.type, data: initialAttachment.base64 } }] }], turnComplete: true } });
-                                addLog('USER', `[Ficheiro enviado: ${initialAttachment.file.name}]`);
-                            }
-                            if (initialMessage) {
-                                setTimeout(() => s.send({ clientContent: { turns: [{ role: "user", parts: [{ text: initialMessage }] }], turnComplete: true } }), 500);
+                            const parts: any[] = [];
+                            if (initialAttachment) parts.push({ inlineData: { mimeType: initialAttachment.file.type, data: initialAttachment.base64 } });
+                            if (initialMessage) parts.push({ text: initialMessage });
+                            if (parts.length > 0) {
+                                s.send({ clientContent: { turns: [{ role: "user", parts: parts }], turnComplete: true } });
                             }
                         });
                     }
                 },
                 onmessage: (msg: LiveServerMessage) => {
-                    // CORREÇÃO 3: Espião para vermos tudo o que entra
-                    console.log("RECEBIDO DO SERVIDOR:", msg);
-
                     if (responseTimeoutRef.current) clearTimeout(responseTimeoutRef.current);
-
-                    // Verifica se chegou a resposta em áudio e toca
+                    if (msg.setupComplete) {
+                        console.log("H.E.L.I.O.S. pronto!");
+                    }
                     const audioData = msg.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
                     if (audioData) playAudioChunk(audioData);
-                    
-                    // Verifica se a Google nos mandou TEXTO direto
-                    const textData = msg.serverContent?.modelTurn?.parts?.[0]?.text;
-                    if (textData) {
-                        currentTranscription.current += textData;
-                    }
-
-                    // Verifica se a Google nos mandou a Transcrição do áudio
                     if (msg.serverContent?.outputTranscription) {
                         currentTranscription.current += msg.serverContent.outputTranscription.text;
                     }
-
-                    // Se a IA acabou de falar, mostra no ecrã
                     if (msg.serverContent?.turnComplete && currentTranscription.current) {
                         addLog('JARVIS', currentTranscription.current);
                         currentTranscription.current = '';
                     }
                 },
-                onclose: () => {
-                    addLog('SYSTEM', 'Ligação terminada.');
-                    setIsConnected(false);
-                    setIsConnecting(false);
-                },
+                onclose: () => disconnectHelios(),
                 onerror: (e) => {
-                    console.error("Erro do servidor:", e);
+                    console.error(e);
                     addLog('ERROR', 'Erro de Ligação (Quota/Rede).');
                     setIsConnecting(false);
                     setIsConnected(false);
@@ -231,15 +238,11 @@ const App: React.FC = () => {
 
   const handleSendMessage = async () => {
     if ((!textInput.trim() && !pendingAttachment) || isConnecting) return;
-    
     await ensureAudioContext();
-
     const msg = textInput;
     const attachment = pendingAttachment;
-    
     setTextInput('');
     setPendingAttachment(null);
-    
     if (msg) addLog('USER', msg);
     
     if (responseTimeoutRef.current) clearTimeout(responseTimeoutRef.current);
@@ -251,21 +254,22 @@ const App: React.FC = () => {
         await connectToHelios(msg, attachment || undefined); 
     } else { 
         sessionRef.current.then(async (s: any) => {
-            if (attachment) {
-                 addLog('USER', `[A carregar anexo: ${attachment.file.name}...]`);
-                 await s.send({ clientContent: { turns: [{ role: "user", parts: [{ inlineData: { mimeType: attachment.file.type, data: attachment.base64 } }] }], turnComplete: true } });
-            }
+            const parts: any[] = [];
             
             if (attachment) {
-                setTimeout(() => {
-                    const prompt = msg || "Analisa este ficheiro/imagem.";
-                    s.send({ clientContent: { turns: [{ role: "user", parts: [{ text: prompt }] }], turnComplete: true } });
-                }, 1000); 
-            } else if (msg) {
-                console.log("A enviar texto: ", msg);
-                s.send({ clientContent: { turns: [{ role: "user", parts: [{ text: msg }] }], turnComplete: true } });
+                 addLog('USER', `[A carregar anexo: ${attachment.file.name}...]`);
+                 parts.push({ inlineData: { mimeType: attachment.file.type, data: attachment.base64 } });
             }
-        }).catch((err) => {
+            if (msg) {
+                parts.push({ text: msg });
+            } else if (attachment) {
+                parts.push({ text: "Analisa este ficheiro/imagem." });
+            }
+
+            // O MÉTODO NOVO PARA ENVIAR MENSAGENS E ANEXOS JUNTOS!
+            s.send({ clientContent: { turns: [{ role: "user", parts: parts }], turnComplete: true } });
+            
+        }).catch((err: any) => {
              console.error(err);
              addLog('ERROR', 'Falha no envio.');
         }); 
@@ -286,7 +290,7 @@ const App: React.FC = () => {
       
       <header className="relative z-10 flex flex-col md:flex-row justify-between items-center md:items-start mb-6 shrink-0 gap-4">
         <div className="flex flex-col items-center md:items-start">
-          <h1 className="text-3xl md:text-5xl font-black tracking-widest text-amber-500 drop-shadow-[0_0_15px_rgba(245,158,11,0.5)] uppercase">H.E.L.I.O.S.</h1>
+          <h1 className="text-3xl md:text-5xl font-black tracking-widest text-amber-500 drop-shadow-[0_0_15px_rgba(245,158,11,0.5)] uppercase font-['Orbitron']">H.E.L.I.O.S.</h1>
           <div className="flex items-center gap-2 text-[10px] md:text-[11px] uppercase tracking-[0.2em] md:tracking-[0.5em] text-amber-600/70 mt-1 text-center md:text-left">
             <Cpu size={12} className="text-amber-500" /> 
             <span>Projecto IA Helios | V3.5 UlTM</span>
@@ -331,7 +335,6 @@ const App: React.FC = () => {
 
             <div className="w-full relative px-2 md:px-0">
                 <div className="relative flex flex-col bg-slate-950/90 border-2 border-amber-600/40 rounded-xl md:rounded-2xl shadow-xl overflow-hidden transition-all focus-within:border-amber-400">
-                    
                     {pendingAttachment && (
                         <div className="flex items-center gap-2 px-4 py-2 bg-amber-900/20 border-b border-amber-500/10">
                             <span className="text-xs text-amber-300 truncate max-w-[200px]">
@@ -342,36 +345,17 @@ const App: React.FC = () => {
                             </button>
                         </div>
                     )}
-
                     <div className="relative flex items-center">
-                        <Paperclip 
-                            onClick={() => fileInputRef.current?.click()}
-                            className={`absolute left-3 md:left-4 cursor-pointer z-10 transition-colors ${pendingAttachment ? 'text-amber-400 fill-amber-900/50' : 'text-amber-500/40 hover:text-amber-500'}`}
-                            size={20} 
-                        />
-
-                        <input 
-                            type="text"
-                            value={textInput}
-                            onChange={(e) => setTextInput(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                            placeholder={isConnected ? (pendingAttachment ? "Analisa este ficheiro..." : "Pergunta ou pede código...") : "Clica para iniciar..."}
-                            className="w-full bg-transparent p-4 md:p-6 pl-10 md:pl-14 pr-32 md:pr-40 text-amber-50 placeholder:text-amber-900/40 focus:outline-none font-mono text-base md:text-lg"
-                        />
-                        
+                        <Paperclip onClick={() => fileInputRef.current?.click()} className={`absolute left-3 md:left-4 cursor-pointer z-10 transition-colors ${pendingAttachment ? 'text-amber-400 fill-amber-900/50' : 'text-amber-500/40 hover:text-amber-500'}`} size={20} />
+                        <input type="text" value={textInput} onChange={(e) => setTextInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} placeholder={isConnected ? (pendingAttachment ? "Analisa este ficheiro..." : "Pergunta ou pede código...") : "Clica para iniciar..."} className="w-full bg-transparent p-4 md:p-6 pl-10 md:pl-14 pr-32 md:pr-40 text-amber-50 placeholder:text-amber-900/40 focus:outline-none font-mono text-base md:text-lg" />
                         <div className="absolute right-2 flex items-center gap-1 md:gap-2">
                             <button onClick={() => setIsMuted(!isMuted)} className={`p-2 md:p-3 rounded-lg transition-all ${isMuted ? 'text-red-500 bg-red-950/20' : 'text-amber-500 hover:bg-amber-900/20'}`}>
                                 {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
                             </button>
-
                             <button onClick={toggleMic} className={`p-2 md:p-3 rounded-lg transition-all ${isMicOn ? 'text-amber-500' : 'text-red-500 bg-red-950/20'}`}>
                                 {isMicOn ? <Mic size={20} /> : <MicOff size={20} />}
                             </button>
-                            <button 
-                                onClick={handleSendMessage} 
-                                disabled={(!textInput.trim() && !pendingAttachment) || isConnecting} 
-                                className={`p-2 md:p-3 rounded-lg ${textInput.trim() || pendingAttachment ? 'text-amber-400' : 'text-amber-900/30'}`}
-                            >
+                            <button onClick={handleSendMessage} disabled={(!textInput.trim() && !pendingAttachment) || isConnecting} className={`p-2 md:p-3 rounded-lg ${textInput.trim() || pendingAttachment ? 'text-amber-400' : 'text-amber-900/30'}`}>
                                 <Send size={22} />
                             </button>
                         </div>
