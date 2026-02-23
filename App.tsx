@@ -132,7 +132,7 @@ const App: React.FC = () => {
             stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             streamRef.current = stream;
         } catch (micError) {
-            addLog('SYSTEM', 'Modo Texto Ativo (Mic off). Verifica as permissões.');
+            addLog('SYSTEM', 'Modo Texto Ativo (Mic off).');
             setIsMicOn(false);
             isMicOnRef.current = false;
         }
@@ -143,14 +143,14 @@ const App: React.FC = () => {
             config: {
                 systemInstruction: {
                     parts: [{ text: `Tu és o H.E.L.I.O.S., uma Inteligência Artificial avançada desenvolvida pelo SIMÃO. Responde sempre em Português de Portugal.
-                    IDENTIDADE: Foste criado pelo Simão para ser uma ferramenta de apoio tecnológico.
-                    O teu foco principal é ajudar em questões de Informática e Programação, mas tens capacidade TOTAL.` }]
+                    IDENTIDADE: Foste criado pelo Simão para ser uma ferramenta de apoio tecnológico. O teu foco é Informática, mas tens capacidade TOTAL.` }]
                 },
                 tools: [{ googleSearch: {} }],
-                
-                // CORREÇÃO CRUCIAL 1: Estas propriedades têm de estar diretamente na RAIZ do config!
-                responseModalities: ["AUDIO"],
-                speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Charon' } } }
+                // A CONFIGURAÇÃO EXATA E OBRIGATÓRIA PARA A GOOGLE TE RESPONDER!
+                generationConfig: {
+                    responseModalities: ["AUDIO"],
+                    speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Charon' } } }
+                }
             },
             callbacks: {
                 onopen: () => {
@@ -169,11 +169,9 @@ const App: React.FC = () => {
                             const base64Audio = floatTo16BitPcmBase64(inputData);
                             
                             sessionPromise.then(s => {
-                                try {
-                                    // CORREÇÃO CRUCIAL 2: Usar o helper de áudio do novo SDK
-                                    s.sendRealtimeInput([{ mimeType: "audio/pcm;rate=24000", data: base64Audio }]);
-                                } catch(err) {}
-                            });
+                                // O método OBRIGATÓRIO é este: s.send({ realtimeInput: ... })
+                                s.send({ realtimeInput: { mediaChunks: [{ mimeType: "audio/pcm;rate=24000", data: base64Audio }] } });
+                            }).catch(() => {});
                         };
                         source.connect(processor);
                         processor.connect(inputCtx.destination);
@@ -184,8 +182,7 @@ const App: React.FC = () => {
                             if (initialAttachment) parts.push({ inlineData: { mimeType: initialAttachment.file.type, data: initialAttachment.base64 } });
                             if (initialMessage) parts.push({ text: initialMessage });
                             if (parts.length > 0) {
-                                // CORREÇÃO CRUCIAL 3: Usar o helper de conteúdo do novo SDK
-                                s.sendClientContent({ turns: [{ role: "user", parts: parts }], turnComplete: true });
+                                s.send({ clientContent: { turns: [{ role: "user", parts: parts }], turnComplete: true } });
                             }
                         });
                     }
@@ -193,10 +190,13 @@ const App: React.FC = () => {
                 onmessage: (msg: LiveServerMessage) => {
                     if (responseTimeoutRef.current) clearTimeout(responseTimeoutRef.current);
                     
+                    if (msg.setupComplete) {
+                        console.log("🔥 A GOOGLE ACEITOU A SESSÃO: H.E.L.I.O.S. ACORDOU!");
+                    }
+
                     const audioData = msg.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
                     if (audioData) playAudioChunk(audioData);
                     
-                    // Como pedimos AUDIO, a IA pode devolver o texto na transcrição
                     const textData = msg.serverContent?.modelTurn?.parts?.[0]?.text || '';
                     if (textData) currentTranscription.current += textData;
 
@@ -204,15 +204,12 @@ const App: React.FC = () => {
                         if (currentTranscription.current) {
                             addLog('JARVIS', currentTranscription.current);
                             currentTranscription.current = '';
-                        } else {
-                            // Se a IA devolver só áudio e nada de texto, avisamos no log para saberes que resultou
-                            addLog('JARVIS', '🎤 [A enviar resposta por voz...]');
                         }
                     }
                 },
                 onclose: () => disconnectHelios(),
                 onerror: (e) => {
-                    addLog('ERROR', 'Erro de Ligação (Quota/Rede).');
+                    addLog('ERROR', 'Erro de Ligação.');
                     setIsConnecting(false);
                     setIsConnected(false);
                 }
@@ -251,8 +248,8 @@ const App: React.FC = () => {
             if (msg) parts.push({ text: msg });
             else if (attachment) parts.push({ text: "Analisa este ficheiro/imagem." });
 
-            // CORREÇÃO CRUCIAL 3: Método nativo para texto/anexos
-            s.sendClientContent({ turns: [{ role: "user", parts: parts }], turnComplete: true });
+            // O MÉTODO OBRIGATÓRIO PARA TEXTO/ANEXOS É O s.send({ clientContent: ... })
+            s.send({ clientContent: { turns: [{ role: "user", parts: parts }], turnComplete: true } });
         }).catch(() => {
              addLog('ERROR', 'Falha no envio.');
         }); 
