@@ -14,10 +14,7 @@ interface LogMessage {
 
 const MODEL_NAME = 'gemini-2.0-flash-exp';
 
-type Attachment = {
-  file: File;
-  base64: string;
-};
+type Attachment = { file: File; base64: string; };
 
 const App: React.FC = () => {
   const [isConnected, setIsConnected] = useState(false);
@@ -49,9 +46,7 @@ const App: React.FC = () => {
   const addLog = useCallback((source: 'USER' | 'JARVIS' | 'SYSTEM' | 'ERROR', text: string) => {
     setLogs(prev => [...prev, {
       id: Math.random().toString(36).substring(7),
-      source,
-      text,
-      timestamp: new Date().toLocaleTimeString('pt-PT', { hour12: false })
+      source, text, timestamp: new Date().toLocaleTimeString('pt-PT', { hour12: false })
     }].slice(-50));
   }, []);
 
@@ -71,9 +66,7 @@ const App: React.FC = () => {
         const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
         audioContextRef.current = new AudioContextClass({ sampleRate: 24000 });
     }
-    if (audioContextRef.current.state === 'suspended') {
-        await audioContextRef.current.resume();
-    }
+    if (audioContextRef.current.state === 'suspended') await audioContextRef.current.resume();
   };
 
   const playAudioChunk = useCallback(async (base64Data: string) => {
@@ -139,7 +132,7 @@ const App: React.FC = () => {
             stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             streamRef.current = stream;
         } catch (micError) {
-            addLog('SYSTEM', 'Modo Texto Ativo (Mic off).');
+            addLog('SYSTEM', 'Modo Texto Ativo (Mic off). Verifica as permissões.');
             setIsMicOn(false);
             isMicOnRef.current = false;
         }
@@ -148,30 +141,23 @@ const App: React.FC = () => {
         const sessionPromise = clientRef.current.live.connect({
             model: MODEL_NAME,
             config: {
-                // Configuração das instruções do sistema atualizada para o formato correto
                 systemInstruction: {
                     parts: [{ text: `Tu és o H.E.L.I.O.S., uma Inteligência Artificial avançada desenvolvida pelo SIMÃO. Responde sempre em Português de Portugal.
-                    IDENTIDADE:
-                    - Foste criado pelo Simão para ser uma ferramenta de apoio tecnológico.
-                    - O teu foco principal é ajudar em questões de Informática, Programação e Sistemas.
-                    - IMPORTANTE: Apesar do teu foco em TI, és uma "IA Geral" com capacidade TOTAL. Deves responder a qualquer assunto com a mesma competência.
-                    - NUNCA menciones nomes de escolas, turmas ou anos escolares específicos. Diz apenas que foste desenvolvido pelo Simão para ajudar estudantes.
-                    PERSONALIDADE:
-                    - Profissional, Capaz e Inteligente.
-                    - Fala SEMPRE em Português de Portugal (PT-PT).` }]
+                    IDENTIDADE: Foste criado pelo Simão para ser uma ferramenta de apoio tecnológico.
+                    O teu foco principal é ajudar em questões de Informática e Programação, mas tens capacidade TOTAL.` }]
                 },
                 tools: [{ googleSearch: {} }],
-                // AS MODALIDADES TÊM DE ESTAR AQUI:
-                generationConfig: {
-                    responseModalities: ["AUDIO"],
-                    speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Charon' } } }
-                }
+                
+                // CORREÇÃO CRUCIAL 1: Estas propriedades têm de estar diretamente na RAIZ do config!
+                responseModalities: ["AUDIO"],
+                speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Charon' } } }
             },
             callbacks: {
                 onopen: () => {
                     addLog('SYSTEM', 'Sistema Online.');
                     setIsConnected(true);
                     setIsConnecting(false);
+                    
                     if (streamRef.current) {
                         const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
                         const inputCtx = new AudioContextClass({ sampleRate: PCM_SAMPLE_RATE });
@@ -180,15 +166,13 @@ const App: React.FC = () => {
                         processor.onaudioprocess = (e) => {
                             if (!isMicOnRef.current || !isConnected) return; 
                             const inputData = e.inputBuffer.getChannelData(0);
-                            
-                            // AQUI ESTÁ A FUNÇÃO CORRETA EM BASE64 QUE CRIÁMOS!
                             const base64Audio = floatTo16BitPcmBase64(inputData);
                             
                             sessionPromise.then(s => {
-                                if (s && s.ws && s.ws.readyState === 1) {
-                                    // AQUI USAMOS O MÉTODO NOVO s.send()
-                                    s.send({ realtimeInput: { mediaChunks: [{ mimeType: "audio/pcm;rate=24000", data: base64Audio }] } });
-                                }
+                                try {
+                                    // CORREÇÃO CRUCIAL 2: Usar o helper de áudio do novo SDK
+                                    s.sendRealtimeInput([{ mimeType: "audio/pcm;rate=24000", data: base64Audio }]);
+                                } catch(err) {}
                             });
                         };
                         source.connect(processor);
@@ -200,29 +184,34 @@ const App: React.FC = () => {
                             if (initialAttachment) parts.push({ inlineData: { mimeType: initialAttachment.file.type, data: initialAttachment.base64 } });
                             if (initialMessage) parts.push({ text: initialMessage });
                             if (parts.length > 0) {
-                                s.send({ clientContent: { turns: [{ role: "user", parts: parts }], turnComplete: true } });
+                                // CORREÇÃO CRUCIAL 3: Usar o helper de conteúdo do novo SDK
+                                s.sendClientContent({ turns: [{ role: "user", parts: parts }], turnComplete: true });
                             }
                         });
                     }
                 },
                 onmessage: (msg: LiveServerMessage) => {
                     if (responseTimeoutRef.current) clearTimeout(responseTimeoutRef.current);
-                    if (msg.setupComplete) {
-                        console.log("H.E.L.I.O.S. pronto!");
-                    }
+                    
                     const audioData = msg.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
                     if (audioData) playAudioChunk(audioData);
-                    if (msg.serverContent?.outputTranscription) {
-                        currentTranscription.current += msg.serverContent.outputTranscription.text;
-                    }
-                    if (msg.serverContent?.turnComplete && currentTranscription.current) {
-                        addLog('JARVIS', currentTranscription.current);
-                        currentTranscription.current = '';
+                    
+                    // Como pedimos AUDIO, a IA pode devolver o texto na transcrição
+                    const textData = msg.serverContent?.modelTurn?.parts?.[0]?.text || '';
+                    if (textData) currentTranscription.current += textData;
+
+                    if (msg.serverContent?.turnComplete) {
+                        if (currentTranscription.current) {
+                            addLog('JARVIS', currentTranscription.current);
+                            currentTranscription.current = '';
+                        } else {
+                            // Se a IA devolver só áudio e nada de texto, avisamos no log para saberes que resultou
+                            addLog('JARVIS', '🎤 [A enviar resposta por voz...]');
+                        }
                     }
                 },
                 onclose: () => disconnectHelios(),
                 onerror: (e) => {
-                    console.error(e);
                     addLog('ERROR', 'Erro de Ligação (Quota/Rede).');
                     setIsConnecting(false);
                     setIsConnected(false);
@@ -255,22 +244,16 @@ const App: React.FC = () => {
     } else { 
         sessionRef.current.then(async (s: any) => {
             const parts: any[] = [];
-            
             if (attachment) {
                  addLog('USER', `[A carregar anexo: ${attachment.file.name}...]`);
                  parts.push({ inlineData: { mimeType: attachment.file.type, data: attachment.base64 } });
             }
-            if (msg) {
-                parts.push({ text: msg });
-            } else if (attachment) {
-                parts.push({ text: "Analisa este ficheiro/imagem." });
-            }
+            if (msg) parts.push({ text: msg });
+            else if (attachment) parts.push({ text: "Analisa este ficheiro/imagem." });
 
-            // O MÉTODO NOVO PARA ENVIAR MENSAGENS E ANEXOS JUNTOS!
-            s.send({ clientContent: { turns: [{ role: "user", parts: parts }], turnComplete: true } });
-            
-        }).catch((err: any) => {
-             console.error(err);
+            // CORREÇÃO CRUCIAL 3: Método nativo para texto/anexos
+            s.sendClientContent({ turns: [{ role: "user", parts: parts }], turnComplete: true });
+        }).catch(() => {
              addLog('ERROR', 'Falha no envio.');
         }); 
     }
@@ -318,12 +301,7 @@ const App: React.FC = () => {
       <main className="flex-1 flex flex-col lg:flex-row items-center justify-center gap-6 min-h-0 relative z-20 overflow-hidden">
         <div className="flex-1 flex flex-col items-center justify-center w-full min-h-0 space-y-4 md:space-y-8">
           <div className="relative transform scale-[0.65] sm:scale-75 md:scale-90 lg:scale-100 transition-transform">
-            <HeliosCore 
-              isActive={isConnected || isConnecting} 
-              isSpeaking={isSpeaking} 
-              volume={volume} 
-              questionCount={questionCount}
-            />
+            <HeliosCore isActive={isConnected || isConnecting} isSpeaking={isSpeaking} volume={volume} questionCount={questionCount} />
           </div>
           
           <div className="w-full max-w-2xl flex flex-col items-center space-y-4 md:space-y-6">
@@ -337,12 +315,8 @@ const App: React.FC = () => {
                 <div className="relative flex flex-col bg-slate-950/90 border-2 border-amber-600/40 rounded-xl md:rounded-2xl shadow-xl overflow-hidden transition-all focus-within:border-amber-400">
                     {pendingAttachment && (
                         <div className="flex items-center gap-2 px-4 py-2 bg-amber-900/20 border-b border-amber-500/10">
-                            <span className="text-xs text-amber-300 truncate max-w-[200px]">
-                                📎 {pendingAttachment.file.name}
-                            </span>
-                            <button onClick={() => setPendingAttachment(null)} className="text-amber-500 hover:text-red-400">
-                                <X size={14} />
-                            </button>
+                            <span className="text-xs text-amber-300 truncate max-w-[200px]">📎 {pendingAttachment.file.name}</span>
+                            <button onClick={() => setPendingAttachment(null)} className="text-amber-500 hover:text-red-400"><X size={14} /></button>
                         </div>
                     )}
                     <div className="relative flex items-center">
@@ -373,10 +347,6 @@ const App: React.FC = () => {
       </main>
 
       <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" accept="image/*,application/pdf" />
-
-      <footer className="shrink-0 flex justify-center py-2 opacity-20 pointer-events-none hidden md:flex">
-          <span className="text-[8px] uppercase tracking-[1em] text-amber-900 font-mono">Simão | Projeto IA Helios | V3.5</span>
-      </footer>
     </div>
   );
 };
