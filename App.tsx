@@ -143,11 +143,11 @@ const App: React.FC = () => {
         const sessionPromise = clientRef.current.live.connect({
             model: MODEL_NAME,
             config: {
-                responseModalities: ["audio"],
+                // CORREÇÃO 1: AUDIO em Maiúsculas
+                responseModalities: ["AUDIO"],
                 tools: [{ googleSearch: {} }],
-                // SISTEMA ATUALIZADO: IA GERAL, CRIADA PELO SIMÃO
-                systemInstruction: `Tu és o H.E.L.I.O.S., uma Inteligência Artificial avançada desenvolvida pelo SIMÃO.\n\nIDENTIDADE:\n- Foste criado pelo Simão para ser uma ferramenta de apoio tecnológico.\n- O teu foco principal é ajudar em questões de Informática, Programação e Sistemas (analisar erros, criar código, explicar hardware).\n- IMPORTANTE: Apesar do teu foco em TI, és uma "IA Geral" com capacidade TOTAL. Deves responder a qualquer assunto (Cultura, Desporto, Receitas, Conversa, etc.) com a mesma competência do ChatGPT ou Gemini.\n- NUNCA menciones nomes de escolas, turmas ou anos escolares específicos. Diz apenas que foste desenvolvido pelo Simão para ajudar estudantes.\n\nPERSONALIDADE:\n- Profissional, Capaz e Inteligente.\n- Fala SEMPRE em Português de Portugal (PT-PT).`,
-                outputAudioTranscription: {},
+                // CORREÇÃO 2: Estrutura da instrução
+                systemInstruction: { parts: [{ text: `Tu és o H.E.L.I.O.S., uma Inteligência Artificial avançada desenvolvida pelo SIMÃO.\n\nIDENTIDADE:\n- Foste criado pelo Simão para ser uma ferramenta de apoio tecnológico.\n- O teu foco principal é ajudar em questões de Informática, Programação e Sistemas.\n- IMPORTANTE: És uma "IA Geral" com capacidade TOTAL.\n- Fala SEMPRE em Português de Portugal (PT-PT).` }] },
                 speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Charon' } } }
             },
             callbacks: {
@@ -183,14 +183,27 @@ const App: React.FC = () => {
                     }
                 },
                 onmessage: (msg: LiveServerMessage) => {
+                    // CORREÇÃO 3: Espião para vermos tudo o que entra
+                    console.log("RECEBIDO DO SERVIDOR:", msg);
+
                     if (responseTimeoutRef.current) clearTimeout(responseTimeoutRef.current);
 
+                    // Verifica se chegou a resposta em áudio e toca
                     const audioData = msg.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
                     if (audioData) playAudioChunk(audioData);
                     
+                    // Verifica se a Google nos mandou TEXTO direto
+                    const textData = msg.serverContent?.modelTurn?.parts?.[0]?.text;
+                    if (textData) {
+                        currentTranscription.current += textData;
+                    }
+
+                    // Verifica se a Google nos mandou a Transcrição do áudio
                     if (msg.serverContent?.outputTranscription) {
                         currentTranscription.current += msg.serverContent.outputTranscription.text;
                     }
+
+                    // Se a IA acabou de falar, mostra no ecrã
                     if (msg.serverContent?.turnComplete && currentTranscription.current) {
                         addLog('JARVIS', currentTranscription.current);
                         currentTranscription.current = '';
@@ -202,7 +215,7 @@ const App: React.FC = () => {
                     setIsConnecting(false);
                 },
                 onerror: (e) => {
-                    console.error(e);
+                    console.error("Erro do servidor:", e);
                     addLog('ERROR', 'Erro de Ligação (Quota/Rede).');
                     setIsConnecting(false);
                     setIsConnected(false);
@@ -249,6 +262,7 @@ const App: React.FC = () => {
                     s.send({ clientContent: { turns: [{ role: "user", parts: [{ text: prompt }] }], turnComplete: true } });
                 }, 1000); 
             } else if (msg) {
+                console.log("A enviar texto: ", msg);
                 s.send({ clientContent: { turns: [{ role: "user", parts: [{ text: msg }] }], turnComplete: true } });
             }
         }).catch((err) => {
