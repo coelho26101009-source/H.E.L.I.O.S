@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import { Mic, MicOff, Send, Calendar, Clock, ShieldCheck, Power, VolumeX, Volume2, Paperclip, X, Cpu } from 'lucide-react';
-import { HeliosCore } from './components/HeliosCore';
-import { Terminal } from './components/Terminal';
+import { HeliosCore } from './HeliosCore';
+import { Terminal } from './Terminal';
+
 
 interface LogMessage {
   id: string;
