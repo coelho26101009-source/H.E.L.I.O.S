@@ -99,7 +99,12 @@ const App: React.FC = () => {
   };
 
   const speakText = (text: string) => {
-      if (isMutedRef.current) return;
+      // CORREÇÃO DO BUG: Se estiver mutado, desliga logo a animação de falar para não bloquear o sistema
+      if (isMutedRef.current) {
+          setIsSpeaking(false);
+          return;
+      }
+      
       window.speechSynthesis.cancel();
       
       const utterance = new SpeechSynthesisUtterance(text.replace(/[*#_]/g, ''));
@@ -148,7 +153,8 @@ const App: React.FC = () => {
             model: MODEL_NAME,
             contents: parts,
             config: {
-              systemInstruction: "Tu és o H.E.L.I.O.S., uma Inteligência Artificial avançada desenvolvida por um programador chamado Simão. Foste criado para ajudar qualquer pessoa, por isso NUNCA assumas que estás a falar com o Simão a menos que a pessoa se identifique como tal. A tua personalidade é a de um amigo e colega de trabalho: fala de forma muito natural, descontraída e coloquial, estritamente em Português de Portugal (PT-PT). Não sejas robótico nem uses palavras caras. O teu foco principal é Informática, Programação, mas tens capacidade geral para conversar sobre qualquer assunto do mundo. Sê amigável, direto e útil. Se te perguntarem quem te criou, responde com orgulho que foi o Simão."
+              // INSTRUÇÕES CORRIGIDAS: Mais profissional, educado e sem gírias estranhas
+              systemInstruction: "Tu és o H.E.L.I.O.S., uma Inteligência Artificial avançada desenvolvida por um programador chamado Simão. O teu objetivo é ajudar os utilizadores de forma educada, clara e profissional. Fala sempre num tom normal, prestável e bem educado em Português de Portugal (PT-PT). Não uses gírias, não chames os utilizadores de 'amigo' constantemente, nem ajas como se fosses um humano num café. És uma IA e tens orgulho nisso. O teu foco principal é Informática, Programação, mas tens capacidade geral para conversar sobre qualquer assunto. Responde de forma direta e útil. Se te perguntarem quem te criou, responde claramente que foi o Simão."
             }
         });
 
@@ -223,7 +229,8 @@ const App: React.FC = () => {
                             <button onClick={() => setIsMicOn(!isMicOn)} className={`p-2 md:p-3 rounded-lg transition-all ${isMicOn ? 'text-amber-500' : 'text-amber-900/30'}`}>
                                 {isMicOn ? <Mic size={20} /> : <MicOff size={20} />}
                             </button>
-                            <button onClick={handleSendMessage} disabled={(!textInput.trim() && !pendingAttachment) || !isConnected || isSpeaking} className={`p-2 md:p-3 rounded-lg ${textInput.trim() || pendingAttachment ? 'text-amber-400' : 'text-amber-900/30'}`}>
+                            {/* CORREÇÃO DO BUG: O botão já não fica bloqueado (disabled) se a IA estiver a falar! */}
+                            <button onClick={handleSendMessage} disabled={(!textInput.trim() && !pendingAttachment) || !isConnected} className={`p-2 md:p-3 rounded-lg ${textInput.trim() || pendingAttachment ? 'text-amber-400' : 'text-amber-900/30'}`}>
                                 <Send size={22} />
                             </button>
                         </div>
