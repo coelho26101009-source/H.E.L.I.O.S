@@ -11,13 +11,13 @@ interface LogMessage {
   timestamp: string;
 }
 
-const MODEL_NAME = 'gemini-2.5-flash'; // O modelo standard mais rápido e atual
+const MODEL_NAME = 'gemini-2.5-flash';
 
 type Attachment = { file: File; base64: string; };
 
 const App: React.FC = () => {
   const [isConnected, setIsConnected] = useState(false);
-  const [isMicOn, setIsMicOn] = useState(false);
+  const [isMicOn, setIsMicOn] = useState(true);
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -50,23 +50,34 @@ const App: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
-  const connectToHelios = () => {
-    if (isConnecting || isConnected) return;
-    setIsConnecting(true);
-    addLog('SYSTEM', 'A iniciar Projecto IA Helios (Standard Core)...');
-    
-    setTimeout(() => {
-        addLog('SYSTEM', 'Sistema Online. Motores Prontos.');
-        setIsConnected(true);
-        setIsConnecting(false);
-    }, 1500);
-  };
+  useEffect(() => {
+    const startHelios = () => {
+        setIsConnecting(true);
+        addLog('SYSTEM', 'A iniciar Projecto IA Helios...');
+        setTimeout(() => {
+            addLog('SYSTEM', 'Sistema Online.');
+            setIsConnected(true);
+            setIsConnecting(false);
+        }, 1500);
+    };
+    startHelios();
+  }, [addLog]);
 
   const disconnectHelios = () => {
     setIsConnected(false);
     addLog('SYSTEM', 'Sessão terminada.');
     window.speechSynthesis.cancel();
     setIsSpeaking(false);
+    
+    setTimeout(() => {
+        setIsConnecting(true);
+        addLog('SYSTEM', 'A restabelecer ligação...');
+        setTimeout(() => {
+            addLog('SYSTEM', 'Sistema Online.');
+            setIsConnected(true);
+            setIsConnecting(false);
+        }, 1500);
+    }, 2000);
   };
 
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -92,7 +103,7 @@ const App: React.FC = () => {
     addLog('USER', msg || `[Ficheiro anexado: ${attachment?.file.name}]`);
     
     if (!isConnected) { 
-        addLog('ERROR', 'O sistema está offline. Clica em Reiniciar.');
+        addLog('ERROR', 'Sem resposta do servidor.');
         return; 
     }
 
@@ -103,32 +114,29 @@ const App: React.FC = () => {
         const parts: any[] = [];
         if (msg) parts.push({ text: msg });
         if (attachment) {
-            parts.push({ 
-                inlineData: { data: attachment.base64, mimeType: attachment.file.type } 
-            });
+            parts.push({ inlineData: { data: attachment.base64, mimeType: attachment.file.type } });
         }
 
         const response = await genAI.models.generateContent({
             model: MODEL_NAME,
             contents: parts,
             config: {
-                systemInstruction: "Tu és o H.E.L.I.O.S., uma IA avançada desenvolvida pelo Simão. Responde sempre em Português de Portugal. Foca-te em Informática, sê direto e profissional."
+                systemInstruction: "Tu és o H.E.L.I.O.S., uma IA avançada desenvolvida pelo Simão. O teu foco é Informática. Responde de forma direta e natural em Português de Portugal."
             }
         });
 
         const replyText = response.text || "Sem resposta.";
         addLog('JARVIS', replyText);
-
+        
         if (!isMutedRef.current) {
             window.speechSynthesis.cancel();
             const utterance = new SpeechSynthesisUtterance(replyText.replace(/[*#_]/g, ''));
             utterance.lang = 'pt-PT';
-            utterance.pitch = 0.9;
-            utterance.rate = 1.0;
-            
+            utterance.pitch = 1.0; 
+            utterance.rate = 1.05;
+            utterance.onstart = () => setIsSpeaking(true);
             utterance.onend = () => setIsSpeaking(false);
             utterance.onerror = () => setIsSpeaking(false);
-            
             window.speechSynthesis.speak(utterance);
         } else {
             setIsSpeaking(false);
@@ -136,7 +144,7 @@ const App: React.FC = () => {
 
     } catch (e: any) { 
         console.error(e);
-        addLog('ERROR', 'Falha na comunicação com a Google. Verifica a API Key.');
+        addLog('ERROR', 'Falha na comunicação.');
         setIsSpeaking(false);
     }
   };
@@ -179,15 +187,9 @@ const App: React.FC = () => {
           </div>
           
           <div className="w-full max-w-2xl flex flex-col items-center space-y-4 md:space-y-6">
-            {!isConnected ? (
-                <button onClick={connectToHelios} className="p-3 md:p-4 rounded-xl border-2 border-amber-500/50 bg-amber-900/20 text-amber-400 hover:bg-amber-500/20 hover:scale-105 transition-all flex items-center gap-2 px-8 shadow-[0_0_20px_rgba(245,158,11,0.2)]">
-                    <Power size={20}/> <span className="text-sm font-bold uppercase tracking-wider">Ligar Sistema</span>
-                </button>
-            ) : (
-                <button onClick={disconnectHelios} className="p-2 md:p-3 rounded-full border border-amber-900/30 bg-slate-950/40 text-amber-900/60 hover:text-red-500 transition-all flex items-center gap-2 px-4">
-                    <Power size={18}/> <span className="text-xs font-bold">DESLIGAR</span>
-                </button>
-            )}
+            <button onClick={disconnectHelios} className="p-2 md:p-3 rounded-full border border-amber-900/30 bg-slate-950/40 text-amber-900/60 hover:text-red-500 transition-all flex items-center gap-2 px-4">
+                <Power size={18}/> <span className="text-xs font-bold">REINICIAR</span>
+            </button>
 
             <div className="w-full relative px-2 md:px-0">
                 <div className="relative flex flex-col bg-slate-950/90 border-2 border-amber-600/40 rounded-xl md:rounded-2xl shadow-xl overflow-hidden transition-all focus-within:border-amber-400">
@@ -199,12 +201,12 @@ const App: React.FC = () => {
                     )}
                     <div className="relative flex items-center">
                         <Paperclip onClick={() => fileInputRef.current?.click()} className={`absolute left-3 md:left-4 cursor-pointer z-10 transition-colors ${pendingAttachment ? 'text-amber-400 fill-amber-900/50' : 'text-amber-500/40 hover:text-amber-500'}`} size={20} />
-                        <input type="text" value={textInput} onChange={(e) => setTextInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} placeholder={isConnected ? (pendingAttachment ? "Analisa este ficheiro..." : "Pergunta ou pede código...") : "Clica em 'Ligar Sistema' para iniciar..."} disabled={!isConnected} className="w-full bg-transparent p-4 md:p-6 pl-10 md:pl-14 pr-32 md:pr-40 text-amber-50 placeholder:text-amber-900/40 focus:outline-none font-mono text-base md:text-lg disabled:opacity-50" />
+                        <input type="text" value={textInput} onChange={(e) => setTextInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} placeholder={isConnected ? (pendingAttachment ? "Analisa este ficheiro..." : "Pergunta ou pede código...") : "A iniciar..."} disabled={!isConnected} className="w-full bg-transparent p-4 md:p-6 pl-10 md:pl-14 pr-32 md:pr-40 text-amber-50 placeholder:text-amber-900/40 focus:outline-none font-mono text-base md:text-lg disabled:opacity-50" />
                         <div className="absolute right-2 flex items-center gap-1 md:gap-2">
                             <button onClick={() => setIsMuted(!isMuted)} className={`p-2 md:p-3 rounded-lg transition-all ${isMuted ? 'text-red-500 bg-red-950/20' : 'text-amber-500 hover:bg-amber-900/20'}`}>
                                 {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
                             </button>
-                            <button onClick={() => setIsMicOn(!isMicOn)} className={`p-2 md:p-3 rounded-lg transition-all ${isMicOn ? 'text-amber-500' : 'text-amber-900/30'}`} title="O microfone será implementado em breve">
+                            <button onClick={() => setIsMicOn(!isMicOn)} className={`p-2 md:p-3 rounded-lg transition-all ${isMicOn ? 'text-amber-500' : 'text-amber-900/30'}`}>
                                 {isMicOn ? <Mic size={20} /> : <MicOff size={20} />}
                             </button>
                             <button onClick={handleSendMessage} disabled={(!textInput.trim() && !pendingAttachment) || !isConnected || isSpeaking} className={`p-2 md:p-3 rounded-lg ${textInput.trim() || pendingAttachment ? 'text-amber-400' : 'text-amber-900/30'}`}>
