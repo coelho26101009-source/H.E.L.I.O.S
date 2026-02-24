@@ -40,7 +40,7 @@ body {
   100% { top: 120%; }
 }
 
-/* --- CORREÇÃO DAS ÓRBITAS --- */
+/* --- ANIMAÇÕES LIMPAS PARA ÓRBITAS --- */
 @keyframes helios-rotate-cw {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
@@ -50,7 +50,7 @@ body {
   from { transform: rotate(360deg); }
   to { transform: rotate(0deg); }
 }
-/* ---------------------------- */
+/* ------------------------------------ */
 
 /* Scrollbar personalizada */
 ::-webkit-scrollbar { width: 4px; }
