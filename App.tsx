@@ -11,7 +11,7 @@ interface LogMessage {
   timestamp: string;
 }
 
-const MODEL_NAME = 'gemini-2.5-flash';
+const MODEL_NAME = 'gemini-1.5-flash';
 
 type Attachment = { file: File; base64: string; };
 
