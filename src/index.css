@@ -1,0 +1,59 @@
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Share+Tech+Mono&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  background-color: #020617;
+  color: #f59e0b;
+  margin: 0;
+  font-family: 'Orbitron', sans-serif;
+  overflow: hidden;
+}
+
+.font-mono {
+  font-family: 'Share Tech Mono', monospace !important;
+}
+
+/* --- ESTILOS ORIGINAIS RECUPERADOS --- */
+
+.hud-border {
+  box-shadow: 0 0 20px rgba(245, 158, 11, 0.1), inset 0 0 15px rgba(245, 158, 11, 0.05);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  position: relative;
+  background: rgba(2, 6, 23, 0.7); /* Fundo ligeiramente escuro para leitura */
+}
+
+/* Linha de Scan que desce */
+.scan-line {
+  position: absolute;
+  top: 0; left: 0; width: 100%; height: 20%;
+  background: linear-gradient(to bottom, transparent, rgba(245, 158, 11, 0.1), transparent);
+  animation: scan 4s linear infinite;
+  pointer-events: none;
+  z-index: 50;
+}
+
+@keyframes scan {
+  0% { top: -20%; }
+  100% { top: 120%; }
+}
+
+/* Animações das Estrelas e Anéis */
+@keyframes helios-rotate-cw {
+  from { transform: translate(-50%, -50%) rotate(0deg); }
+  to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+@keyframes helios-rotate-ccw {
+  from { transform: translate(-50%, -50%) rotate(360deg); }
+  to { transform: translate(-50%, -50%) rotate(0deg); }
+}
+
+/* Scrollbar personalizada */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.3); }
+::-webkit-scrollbar-thumb { background: rgba(245, 158, 11, 0.3); border-radius: 10px; }
+
+input::placeholder { color: rgba(245, 158, 11, 0.3) !important; }
