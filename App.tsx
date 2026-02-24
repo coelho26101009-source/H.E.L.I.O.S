@@ -51,6 +51,12 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    window.speechSynthesis.onvoiceschanged = () => {
+        window.speechSynthesis.getVoices();
+    };
+  }, []);
+
+  useEffect(() => {
     const startHelios = () => {
         setIsConnecting(true);
         addLog('SYSTEM', 'A iniciar Projecto IA Helios...');
@@ -92,6 +98,27 @@ const App: React.FC = () => {
     reader.readAsDataURL(file);
   };
 
+  const speakText = (text: string) => {
+      if (isMutedRef.current) return;
+      window.speechSynthesis.cancel();
+      
+      const utterance = new SpeechSynthesisUtterance(text.replace(/[*#_]/g, ''));
+      utterance.lang = 'pt-PT';
+      
+      const voices = window.speechSynthesis.getVoices();
+      const ptVoice = voices.find(v => v.lang.includes('pt-PT') && (v.name.includes('Google') || v.name.includes('Microsoft'))) || voices.find(v => v.lang.includes('pt'));
+      if (ptVoice) utterance.voice = ptVoice;
+
+      utterance.pitch = 1.0; 
+      utterance.rate = 1.05;
+      
+      utterance.onstart = () => setIsSpeaking(true);
+      utterance.onend = () => setIsSpeaking(false);
+      utterance.onerror = () => setIsSpeaking(false);
+      
+      window.speechSynthesis.speak(utterance);
+  };
+
   const handleSendMessage = async () => {
     if ((!textInput.trim() && !pendingAttachment) || isConnecting) return;
     
@@ -108,7 +135,7 @@ const App: React.FC = () => {
     }
 
     try {
-        setIsSpeaking(true);
+        setIsSpeaking(true); 
         const genAI = new GoogleGenAI({ apiKey: import.meta.env.VITE_GOOGLE_API_KEY });
         
         const parts: any[] = [];
@@ -121,26 +148,13 @@ const App: React.FC = () => {
             model: MODEL_NAME,
             contents: parts,
             config: {
-                systemInstruction: "Tu és o H.E.L.I.O.S., uma IA avançada desenvolvida pelo Simão. O teu foco é Informática. Responde de forma direta e natural em Português de Portugal."
+                systemInstruction: "Tu és o H.E.L.I.O.S., uma IA avançada desenvolvida pelo Simão. O teu foco é Informática e Sistemas. Fala de forma muito natural, coloquial e amigável em Português de Portugal. Dá respostas diretas e úteis, como se fosses um parceiro de trabalho ao lado dele."
             }
         });
 
         const replyText = response.text || "Sem resposta.";
         addLog('JARVIS', replyText);
-        
-        if (!isMutedRef.current) {
-            window.speechSynthesis.cancel();
-            const utterance = new SpeechSynthesisUtterance(replyText.replace(/[*#_]/g, ''));
-            utterance.lang = 'pt-PT';
-            utterance.pitch = 1.0; 
-            utterance.rate = 1.05;
-            utterance.onstart = () => setIsSpeaking(true);
-            utterance.onend = () => setIsSpeaking(false);
-            utterance.onerror = () => setIsSpeaking(false);
-            window.speechSynthesis.speak(utterance);
-        } else {
-            setIsSpeaking(false);
-        }
+        speakText(replyText);
 
     } catch (e: any) { 
         console.error(e);
@@ -232,4 +246,3 @@ const App: React.FC = () => {
 };
 
 export default App;
-
