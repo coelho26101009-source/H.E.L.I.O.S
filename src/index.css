@@ -40,16 +40,17 @@ body {
   100% { top: 120%; }
 }
 
-/* Animações das Estrelas e Anéis */
+/* --- CORREÇÃO DAS ÓRBITAS --- */
 @keyframes helios-rotate-cw {
-  from { transform: translate(-50%, -50%) rotate(0deg); }
-  to { transform: translate(-50%, -50%) rotate(360deg); }
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 @keyframes helios-rotate-ccw {
-  from { transform: translate(-50%, -50%) rotate(360deg); }
-  to { transform: translate(-50%, -50%) rotate(0deg); }
+  from { transform: rotate(360deg); }
+  to { transform: rotate(0deg); }
 }
+/* ---------------------------- */
 
 /* Scrollbar personalizada */
 ::-webkit-scrollbar { width: 4px; }
