@@ -21,6 +21,8 @@ const App: React.FC = () => {
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
+  // NOVO ESTADO: Controla se o microfone está a ouvir ativamente
+  const [isListening, setIsListening] = useState(false);
   const [logs, setLogs] = useState<LogMessage[]>([]);
   const [textInput, setTextInput] = useState('');
   const [currentTime, setCurrentTime] = useState('--:--:--');
@@ -29,6 +31,8 @@ const App: React.FC = () => {
 
   const isMutedRef = useRef(isMuted);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // NOVA REFERÊNCIA: Guarda a instância do SpeechRecognition
+  const recognitionRef = useRef<any>(null);
 
   const questionCount = logs.filter(l => l.source === 'USER').length;
 
@@ -56,6 +60,35 @@ const App: React.FC = () => {
     };
   }, []);
 
+  // NOVO USEEFFECT: Configuração do Microfone
+  useEffect(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'pt-PT';
+      recognition.continuous = false;
+      recognition.interimResults = false;
+
+      recognition.onstart = () => setIsListening(true);
+      
+      recognition.onresult = (event: any) => {
+        const transcript = event.results[0][0].transcript;
+        setTextInput(prev => prev + (prev ? ' ' : '') + transcript);
+      };
+
+      recognition.onerror = (event: any) => {
+        console.error('Erro no microfone:', event.error);
+        setIsListening(false);
+      };
+
+      recognition.onend = () => setIsListening(false);
+
+      recognitionRef.current = recognition;
+    } else {
+      console.warn("Reconhecimento de voz não suportado neste browser.");
+    }
+  }, []);
+
   // DESIGN DO GITHUB: LIGA AUTOMATICAMENTE
   useEffect(() => {
     const startHelios = () => {
@@ -75,6 +108,7 @@ const App: React.FC = () => {
     addLog('SYSTEM', 'Sessão terminada.');
     window.speechSynthesis.cancel();
     setIsSpeaking(false);
+    if (isListening) recognitionRef.current?.stop(); // Desliga o mic ao reiniciar
     
     setTimeout(() => {
         setIsConnecting(true);
@@ -122,6 +156,16 @@ const App: React.FC = () => {
       utterance.onerror = () => setIsSpeaking(false);
       
       window.speechSynthesis.speak(utterance);
+  };
+
+  // NOVA FUNÇÃO: Ligar/Desligar o microfone real
+  const toggleMicrophone = () => {
+    if (isListening) {
+      recognitionRef.current?.stop();
+    } else {
+      // Pedimos ao browser para começar a ouvir
+      recognitionRef.current?.start();
+    }
   };
 
   const handleSendMessage = async () => {
@@ -233,9 +277,12 @@ const App: React.FC = () => {
                             <button onClick={() => setIsMuted(!isMuted)} className={`p-2 md:p-3 rounded-lg transition-all ${isMuted ? 'text-red-500 bg-red-950/20' : 'text-amber-500 hover:bg-amber-900/20'}`}>
                                 {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
                             </button>
-                            <button onClick={() => setIsMicOn(!isMicOn)} className={`p-2 md:p-3 rounded-lg transition-all ${isMicOn ? 'text-amber-500' : 'text-amber-900/30'}`}>
-                                {isMicOn ? <Mic size={20} /> : <MicOff size={20} />}
+                            
+                            {/* AQUI ESTÁ A MAGIA NO BOTÃO DO MICROFONE */}
+                            <button onClick={toggleMicrophone} className={`p-2 md:p-3 rounded-lg transition-all ${isListening ? 'text-red-500 bg-red-950/20 animate-pulse' : 'text-amber-500 hover:bg-amber-900/20'}`}>
+                                {isListening ? <Mic size={20} /> : <MicOff size={20} />}
                             </button>
+                            
                             <button onClick={handleSendMessage} disabled={(!textInput.trim() && !pendingAttachment) || !isConnected} className={`p-2 md:p-3 rounded-lg ${textInput.trim() || pendingAttachment ? 'text-amber-400' : 'text-amber-900/30'}`}>
                                 <Send size={22} />
                             </button>
