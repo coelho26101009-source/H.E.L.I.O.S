@@ -1,8 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-// Novos ícones adicionados para o menu e login!
 import { Mic, MicOff, Send, Calendar, Clock, ShieldCheck, Power, VolumeX, Volume2, Paperclip, X, Cpu, Menu, LogOut, MessageSquare, Plus } from 'lucide-react';
 import { HeliosCore } from './components/HeliosCore'; 
 import { Terminal } from './components/Terminal';     
+
+// IMPORTAÇÕES DO FIREBASE (NOVO)
+import { signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
+import { auth, googleProvider } from './firebase';
 
 interface LogMessage {
   id: string;
@@ -17,9 +20,10 @@ const VISION_MODEL = 'llama-3.2-11b-vision-preview';
 type Attachment = { file: File; base64: string; };
 
 const App: React.FC = () => {
-  // --- NOVOS ESTADOS DO SISTEMA DE LOGIN E MENU ---
-  const [isAuthenticated, setIsAuthenticated] = useState(false); // Controla se passaste a porta
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);     // Controla a barra lateral
+  // --- ESTADOS DO SISTEMA DE LOGIN ---
+  const [user, setUser] = useState<User | null>(null); // Guarda a info da tua conta Google
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const isAuthenticated = !!user; // Se houver user, estás autenticado!
 
   const [isConnected, setIsConnected] = useState(false);
   const [isMicOn, setIsMicOn] = useState(true);
@@ -39,7 +43,6 @@ const App: React.FC = () => {
 
   const questionCount = logs.filter(l => l.source === 'USER').length;
 
-  // Lista de conversas falsas apenas para veres o design
   const mockChats = [
     { id: 1, title: "Apoio em React e Tailwind" },
     { id: 2, title: "Configuração do H.E.L.I.O.S." },
@@ -70,6 +73,14 @@ const App: React.FC = () => {
     };
   }, []);
 
+  // VIGIA SE ESTÁS LOGADO OU NÃO (Impede que tenhas de fazer login sempre que atualizas a página)
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+    });
+    return () => unsubscribe();
+  }, []);
+
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (SpeechRecognition) {
@@ -91,29 +102,41 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // O arranque agora só acontece quando fazes o Login
   useEffect(() => {
     if (isAuthenticated) {
         const startHelios = () => {
             setIsConnecting(true);
             addLog('SYSTEM', 'A iniciar Projecto IA Helios com Motor Groq...');
             setTimeout(() => {
-                addLog('SYSTEM', 'Sistema Online. Credenciais Válidas.');
+                addLog('SYSTEM', `Sistema Online. Bem-vindo, ${user?.displayName?.split(' ')[0] || 'Comandante'}.`);
                 setIsConnected(true);
                 setIsConnecting(false);
             }, 1500);
         };
         startHelios();
     } else {
-        // Se sair da sessão, desliga tudo
         setIsConnected(false);
         setLogs([]);
     }
-  }, [isAuthenticated, addLog]);
+  }, [isAuthenticated, addLog, user]);
 
-  const handleLogout = () => {
-      setIsSidebarOpen(false);
-      setIsAuthenticated(false);
+  // FUNÇÕES REAIS DE LOGIN E LOGOUT
+  const handleLogin = async () => {
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (error) {
+      console.error("Erro ao fazer login:", error);
+      alert("Falha no login. Verifica a consola.");
+    }
+  };
+
+  const handleLogout = async () => {
+      try {
+        await signOut(auth);
+        setIsSidebarOpen(false);
+      } catch (error) {
+        console.error("Erro ao terminar sessão:", error);
+      }
   };
 
   const disconnectHelios = () => {
@@ -196,7 +219,7 @@ const App: React.FC = () => {
         const messages: any[] = [
             {
                 role: "system",
-                content: "Tu és o H.E.L.I.O.S., uma Inteligência Artificial avançada desenvolvida por um programador chamado Simão. O teu objetivo é ajudar os utilizadores de forma educada, clara e profissional. Fala sempre num tom normal, prestável e bem educado em Português de Portugal (PT-PT). Não uses gírias. És uma IA e tens orgulho nisso. O teu foco principal é Informática, Programação, mas tens capacidade geral para conversar sobre qualquer assunto. Responde de forma direta e útil."
+                content: `Tu és o H.E.L.I.O.S., uma Inteligência Artificial avançada desenvolvida pelo Simão. Estás a falar com o utilizador ${user?.displayName || 'Desconhecido'}. Fala sempre num tom educado e em Português de Portugal (PT-PT).`
             }
         ];
 
@@ -241,7 +264,7 @@ const App: React.FC = () => {
   };
 
   // ==========================================
-  // ECRÃ DE LOGIN (VISUAL)
+  // ECRÃ DE LOGIN (VERDADEIRO)
   // ==========================================
   if (!isAuthenticated) {
       return (
@@ -254,10 +277,10 @@ const App: React.FC = () => {
                 <p className="text-amber-600/70 text-[10px] md:text-xs uppercase tracking-[0.3em] mb-10 text-center font-bold">Acesso Restrito ao Sistema</p>
 
                 <button 
-                  onClick={() => setIsAuthenticated(true)}
+                  onClick={handleLogin}
                   className="w-full py-4 px-6 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/50 rounded-lg text-amber-400 font-bold tracking-widest uppercase transition-all flex items-center justify-center gap-3 hover:shadow-[0_0_20px_rgba(245,158,11,0.3)] hover:scale-105"
                 >
-                   Entrar no Sistema
+                   Autenticar com o Google
                 </button>
             </div>
             <div className="absolute bottom-6 text-amber-900/40 text-[10px] uppercase tracking-widest font-mono">
@@ -268,34 +291,48 @@ const App: React.FC = () => {
   }
 
   // ==========================================
-  // APLICAÇÃO PRINCIPAL (COM SIDEBAR)
+  // APLICAÇÃO PRINCIPAL
   // ==========================================
   return (
     <div className="flex flex-col h-screen w-full bg-[#020617] text-amber-500 p-4 md:p-8 lg:p-10 overflow-hidden relative font-sans">
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[300px] md:w-[800px] h-[300px] md:h-[800px] bg-amber-600/5 rounded-full blur-[80px] md:blur-[150px] pointer-events-none opacity-40"></div>
       
-      {/* OVERLAY ESCURO QUANDO A SIDEBAR ESTÁ ABERTA */}
       {isSidebarOpen && (
           <div className="fixed inset-0 bg-black/60 z-40 backdrop-blur-sm" onClick={() => setIsSidebarOpen(false)} />
       )}
 
-      {/* BARRA LATERAL (SIDEBAR) */}
+      {/* BARRA LATERAL COM A TUA FOTO E NOME */}
       <div className={`fixed top-0 left-0 h-full w-72 bg-[#0a0d1a] border-r border-amber-500/20 z-50 transform transition-transform duration-300 shadow-[20px_0_50px_rgba(0,0,0,0.5)] flex flex-col ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-          <div className="p-5 flex justify-between items-center border-b border-amber-500/10">
+          <div className="p-5 flex justify-between items-center border-b border-amber-500/10 mb-4">
                <div className="flex items-center gap-2">
                    <Cpu size={18} className="text-amber-500" />
                    <span className="font-bold tracking-widest text-amber-500 font-['Orbitron']">H.E.L.I.O.S.</span>
                </div>
                <button onClick={() => setIsSidebarOpen(false)} className="text-amber-500/60 hover:text-amber-500 bg-amber-500/5 p-1 rounded"><X size={18}/></button>
           </div>
-          <div className="p-4">
+
+          <div className="px-4">
+              {/* CARTÃO DE UTILIZADOR */}
+              <div className="flex items-center gap-3 mb-6 bg-slate-900/50 p-3 rounded-xl border border-amber-500/20">
+                  {user?.photoURL ? (
+                      <img src={user.photoURL} alt="Perfil" className="w-10 h-10 rounded-full border border-amber-500/50" />
+                  ) : (
+                      <div className="w-10 h-10 rounded-full bg-amber-500/20 flex items-center justify-center border border-amber-500/50 text-amber-500 font-bold">
+                          {user?.displayName?.charAt(0) || 'U'}
+                      </div>
+                  )}
+                  <div className="flex flex-col overflow-hidden">
+                      <span className="text-sm font-bold text-amber-400 truncate">{user?.displayName || 'Utilizador'}</span>
+                      <span className="text-[10px] text-amber-500/50 truncate">{user?.email}</span>
+                  </div>
+              </div>
+
               <button className="w-full py-3 px-4 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 rounded-lg text-amber-400 font-bold text-sm flex items-center justify-center gap-2 transition-all">
                   <Plus size={16} /> NOVO CHAT
               </button>
           </div>
           
-          {/* LISTA DE CHATS */}
-          <div className="flex-1 overflow-y-auto px-3 space-y-1 py-2">
+          <div className="flex-1 overflow-y-auto px-3 space-y-1 py-4">
               <div className="text-[10px] uppercase tracking-widest text-amber-900 font-bold mb-3 px-2">Histórico (Em Breve)</div>
               {mockChats.map(chat => (
                   <button key={chat.id} className="w-full text-left p-3 rounded-lg hover:bg-amber-500/5 text-amber-100/70 text-sm flex items-center gap-3 transition-colors border border-transparent hover:border-amber-500/10">
@@ -312,7 +349,6 @@ const App: React.FC = () => {
           </div>
       </div>
 
-      {/* CABEÇALHO ATUALIZADO COM BOTÃO DE MENU */}
       <header className="relative z-10 flex flex-col md:flex-row justify-between items-center md:items-start mb-6 shrink-0 gap-4">
         <div className="flex items-start gap-4">
           <button onClick={() => setIsSidebarOpen(true)} className="mt-1 p-2 bg-slate-900/60 border border-amber-500/20 rounded-lg text-amber-500 hover:bg-amber-500/20 hover:scale-105 transition-all">
