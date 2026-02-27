@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Mic, MicOff, Send, Calendar, Clock, ShieldCheck, Power, VolumeX, Volume2, Paperclip, X, Cpu } from 'lucide-react';
+// Novos ícones adicionados para o menu e login!
+import { Mic, MicOff, Send, Calendar, Clock, ShieldCheck, Power, VolumeX, Volume2, Paperclip, X, Cpu, Menu, LogOut, MessageSquare, Plus } from 'lucide-react';
 import { HeliosCore } from './components/HeliosCore'; 
 import { Terminal } from './components/Terminal';     
 
@@ -16,6 +17,10 @@ const VISION_MODEL = 'llama-3.2-11b-vision-preview';
 type Attachment = { file: File; base64: string; };
 
 const App: React.FC = () => {
+  // --- NOVOS ESTADOS DO SISTEMA DE LOGIN E MENU ---
+  const [isAuthenticated, setIsAuthenticated] = useState(false); // Controla se passaste a porta
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);     // Controla a barra lateral
+
   const [isConnected, setIsConnected] = useState(false);
   const [isMicOn, setIsMicOn] = useState(true);
   const [isMuted, setIsMuted] = useState(false);
@@ -33,6 +38,13 @@ const App: React.FC = () => {
   const recognitionRef = useRef<any>(null);
 
   const questionCount = logs.filter(l => l.source === 'USER').length;
+
+  // Lista de conversas falsas apenas para veres o design
+  const mockChats = [
+    { id: 1, title: "Apoio em React e Tailwind" },
+    { id: 2, title: "Configuração do H.E.L.I.O.S." },
+    { id: 3, title: "Motor do Groq Llama 3" },
+  ];
 
   const addLog = useCallback((source: 'USER' | 'JARVIS' | 'SYSTEM' | 'ERROR', text: string) => {
     setLogs(prev => [...prev, {
@@ -65,39 +77,44 @@ const App: React.FC = () => {
       recognition.lang = 'pt-PT';
       recognition.continuous = false;
       recognition.interimResults = false;
-
       recognition.onstart = () => setIsListening(true);
-      
       recognition.onresult = (event: any) => {
         const transcript = event.results[0][0].transcript;
         setTextInput(prev => prev + (prev ? ' ' : '') + transcript);
       };
-
       recognition.onerror = (event: any) => {
         console.error('Erro no microfone:', event.error);
         setIsListening(false);
       };
-
       recognition.onend = () => setIsListening(false);
-
       recognitionRef.current = recognition;
-    } else {
-      console.warn("Reconhecimento de voz não suportado neste browser.");
     }
   }, []);
 
+  // O arranque agora só acontece quando fazes o Login
   useEffect(() => {
-    const startHelios = () => {
-        setIsConnecting(true);
-        addLog('SYSTEM', 'A iniciar Projecto IA Helios com Motor Groq...');
-        setTimeout(() => {
-            addLog('SYSTEM', 'Sistema Online.');
-            setIsConnected(true);
-            setIsConnecting(false);
-        }, 1500);
-    };
-    startHelios();
-  }, [addLog]);
+    if (isAuthenticated) {
+        const startHelios = () => {
+            setIsConnecting(true);
+            addLog('SYSTEM', 'A iniciar Projecto IA Helios com Motor Groq...');
+            setTimeout(() => {
+                addLog('SYSTEM', 'Sistema Online. Credenciais Válidas.');
+                setIsConnected(true);
+                setIsConnecting(false);
+            }, 1500);
+        };
+        startHelios();
+    } else {
+        // Se sair da sessão, desliga tudo
+        setIsConnected(false);
+        setLogs([]);
+    }
+  }, [isAuthenticated, addLog]);
+
+  const handleLogout = () => {
+      setIsSidebarOpen(false);
+      setIsAuthenticated(false);
+  };
 
   const disconnectHelios = () => {
     setIsConnected(false);
@@ -134,32 +151,23 @@ const App: React.FC = () => {
           setIsSpeaking(false);
           return;
       }
-      
       window.speechSynthesis.cancel();
-      
       const utterance = new SpeechSynthesisUtterance(text.replace(/[*#_]/g, ''));
       utterance.lang = 'pt-PT';
-      
       const voices = window.speechSynthesis.getVoices();
       const ptVoice = voices.find(v => v.lang.includes('pt-PT') && (v.name.includes('Google') || v.name.includes('Microsoft'))) || voices.find(v => v.lang.includes('pt'));
       if (ptVoice) utterance.voice = ptVoice;
-
       utterance.pitch = 1.0; 
       utterance.rate = 1.05;
-      
       utterance.onstart = () => setIsSpeaking(true);
       utterance.onend = () => setIsSpeaking(false);
       utterance.onerror = () => setIsSpeaking(false);
-      
       window.speechSynthesis.speak(utterance);
   };
 
   const toggleMicrophone = () => {
-    if (isListening) {
-      recognitionRef.current?.stop();
-    } else {
-      recognitionRef.current?.start();
-    }
+    if (isListening) recognitionRef.current?.stop();
+    else recognitionRef.current?.start();
   };
 
   const handleSendMessage = async () => {
@@ -185,7 +193,6 @@ const App: React.FC = () => {
 
     try {
         setIsSpeaking(true); 
-        
         const messages: any[] = [
             {
                 role: "system",
@@ -193,7 +200,6 @@ const App: React.FC = () => {
             }
         ];
 
-        // Se houver ficheiro, preparamos o modelo de Visão
         if (attachment) {
             messages.push({
                 role: "user",
@@ -219,9 +225,7 @@ const App: React.FC = () => {
             })
         });
 
-        if (!response.ok) {
-            throw new Error(`Erro Groq: ${response.statusText}`);
-        }
+        if (!response.ok) throw new Error(`Erro Groq: ${response.statusText}`);
 
         const data = await response.json();
         const replyText = data.choices[0]?.message?.content || "Sem resposta.";
@@ -230,22 +234,96 @@ const App: React.FC = () => {
         speakText(replyText);
 
     } catch (e: any) { 
-        console.error("Erro completo:", e);
-        addLog('ERROR', 'Falha na comunicação com o Groq.');
+        console.error(e);
+        addLog('ERROR', 'Falha na comunicação.');
         setIsSpeaking(false);
     }
   };
 
+  // ==========================================
+  // ECRÃ DE LOGIN (VISUAL)
+  // ==========================================
+  if (!isAuthenticated) {
+      return (
+        <div className="flex flex-col h-screen w-full bg-[#020617] items-center justify-center relative font-sans overflow-hidden">
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-amber-600/10 rounded-full blur-[100px] pointer-events-none animate-pulse"></div>
+            
+            <div className="z-10 flex flex-col items-center bg-slate-950/80 p-8 md:p-12 rounded-2xl border border-amber-500/20 backdrop-blur-xl shadow-[0_0_50px_rgba(245,158,11,0.1)] max-w-md w-[90%]">
+                <Cpu size={56} className="text-amber-500 mb-6 drop-shadow-[0_0_15px_rgba(245,158,11,0.8)]" />
+                <h1 className="text-4xl md:text-5xl font-black tracking-widest text-amber-500 drop-shadow-[0_0_15px_rgba(245,158,11,0.5)] uppercase font-['Orbitron'] mb-2">H.E.L.I.O.S.</h1>
+                <p className="text-amber-600/70 text-[10px] md:text-xs uppercase tracking-[0.3em] mb-10 text-center font-bold">Acesso Restrito ao Sistema</p>
+
+                <button 
+                  onClick={() => setIsAuthenticated(true)}
+                  className="w-full py-4 px-6 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/50 rounded-lg text-amber-400 font-bold tracking-widest uppercase transition-all flex items-center justify-center gap-3 hover:shadow-[0_0_20px_rgba(245,158,11,0.3)] hover:scale-105"
+                >
+                   Entrar no Sistema
+                </button>
+            </div>
+            <div className="absolute bottom-6 text-amber-900/40 text-[10px] uppercase tracking-widest font-mono">
+                Projecto IA Helios | Simão
+            </div>
+        </div>
+      );
+  }
+
+  // ==========================================
+  // APLICAÇÃO PRINCIPAL (COM SIDEBAR)
+  // ==========================================
   return (
     <div className="flex flex-col h-screen w-full bg-[#020617] text-amber-500 p-4 md:p-8 lg:p-10 overflow-hidden relative font-sans">
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[300px] md:w-[800px] h-[300px] md:h-[800px] bg-amber-600/5 rounded-full blur-[80px] md:blur-[150px] pointer-events-none opacity-40"></div>
       
+      {/* OVERLAY ESCURO QUANDO A SIDEBAR ESTÁ ABERTA */}
+      {isSidebarOpen && (
+          <div className="fixed inset-0 bg-black/60 z-40 backdrop-blur-sm" onClick={() => setIsSidebarOpen(false)} />
+      )}
+
+      {/* BARRA LATERAL (SIDEBAR) */}
+      <div className={`fixed top-0 left-0 h-full w-72 bg-[#0a0d1a] border-r border-amber-500/20 z-50 transform transition-transform duration-300 shadow-[20px_0_50px_rgba(0,0,0,0.5)] flex flex-col ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+          <div className="p-5 flex justify-between items-center border-b border-amber-500/10">
+               <div className="flex items-center gap-2">
+                   <Cpu size={18} className="text-amber-500" />
+                   <span className="font-bold tracking-widest text-amber-500 font-['Orbitron']">H.E.L.I.O.S.</span>
+               </div>
+               <button onClick={() => setIsSidebarOpen(false)} className="text-amber-500/60 hover:text-amber-500 bg-amber-500/5 p-1 rounded"><X size={18}/></button>
+          </div>
+          <div className="p-4">
+              <button className="w-full py-3 px-4 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 rounded-lg text-amber-400 font-bold text-sm flex items-center justify-center gap-2 transition-all">
+                  <Plus size={16} /> NOVO CHAT
+              </button>
+          </div>
+          
+          {/* LISTA DE CHATS */}
+          <div className="flex-1 overflow-y-auto px-3 space-y-1 py-2">
+              <div className="text-[10px] uppercase tracking-widest text-amber-900 font-bold mb-3 px-2">Histórico (Em Breve)</div>
+              {mockChats.map(chat => (
+                  <button key={chat.id} className="w-full text-left p-3 rounded-lg hover:bg-amber-500/5 text-amber-100/70 text-sm flex items-center gap-3 transition-colors border border-transparent hover:border-amber-500/10">
+                      <MessageSquare size={14} className="opacity-50 shrink-0" />
+                      <span className="truncate">{chat.title}</span>
+                  </button>
+              ))}
+          </div>
+
+          <div className="p-4 border-t border-amber-500/10 bg-slate-950/50">
+               <button onClick={handleLogout} className="w-full py-2.5 px-4 hover:bg-red-500/10 text-red-500/80 hover:text-red-400 rounded-lg text-sm font-bold tracking-wider uppercase flex items-center justify-center gap-2 transition-all border border-transparent hover:border-red-500/20">
+                  <LogOut size={16} /> Terminar Sessão
+               </button>
+          </div>
+      </div>
+
+      {/* CABEÇALHO ATUALIZADO COM BOTÃO DE MENU */}
       <header className="relative z-10 flex flex-col md:flex-row justify-between items-center md:items-start mb-6 shrink-0 gap-4">
-        <div className="flex flex-col items-center md:items-start">
-          <h1 className="text-3xl md:text-5xl font-black tracking-widest text-amber-500 drop-shadow-[0_0_15px_rgba(245,158,11,0.5)] uppercase font-['Orbitron']">H.E.L.I.O.S.</h1>
-          <div className="flex items-center gap-2 text-[10px] md:text-[11px] uppercase tracking-[0.2em] md:tracking-[0.5em] text-amber-600/70 mt-1 text-center md:text-left">
-            <Cpu size={12} className="text-amber-500" /> 
-            <span>Projecto IA Helios | V4.0 STD</span>
+        <div className="flex items-start gap-4">
+          <button onClick={() => setIsSidebarOpen(true)} className="mt-1 p-2 bg-slate-900/60 border border-amber-500/20 rounded-lg text-amber-500 hover:bg-amber-500/20 hover:scale-105 transition-all">
+              <Menu size={24} />
+          </button>
+          <div className="flex flex-col items-start">
+            <h1 className="text-3xl md:text-5xl font-black tracking-widest text-amber-500 drop-shadow-[0_0_15px_rgba(245,158,11,0.5)] uppercase font-['Orbitron']">H.E.L.I.O.S.</h1>
+            <div className="flex items-center gap-2 text-[10px] md:text-[11px] uppercase tracking-[0.2em] md:tracking-[0.5em] text-amber-600/70 mt-1 text-left">
+              <Cpu size={12} className="text-amber-500" /> 
+              <span>Projecto IA Helios | V4.0 STD</span>
+            </div>
           </div>
         </div>
         
@@ -293,11 +371,9 @@ const App: React.FC = () => {
                             <button onClick={() => setIsMuted(!isMuted)} className={`p-2 md:p-3 rounded-lg transition-all ${isMuted ? 'text-red-500 bg-red-950/20' : 'text-amber-500 hover:bg-amber-900/20'}`}>
                                 {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
                             </button>
-                            
                             <button onClick={toggleMicrophone} className={`p-2 md:p-3 rounded-lg transition-all ${isListening ? 'text-red-500 bg-red-950/20 animate-pulse' : 'text-amber-500 hover:bg-amber-900/20'}`}>
                                 {isListening ? <Mic size={20} /> : <MicOff size={20} />}
                             </button>
-                            
                             <button onClick={handleSendMessage} disabled={(!textInput.trim() && !pendingAttachment) || !isConnected} className={`p-2 md:p-3 rounded-lg ${textInput.trim() || pendingAttachment ? 'text-amber-400' : 'text-amber-900/30'}`}>
                                 <Send size={22} />
                             </button>
