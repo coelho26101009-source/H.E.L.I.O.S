@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { GoogleGenAI } from '@google/genai';
 import { Mic, MicOff, Send, Calendar, Clock, ShieldCheck, Power, VolumeX, Volume2, Paperclip, X, Cpu } from 'lucide-react';
-import { HeliosCore } from './components/HeliosCore'; // <--- PASTA CORRETA
-import { Terminal } from './components/Terminal';     // <--- PASTA CORRETA
+import { HeliosCore } from './components/HeliosCore'; 
+import { Terminal } from './components/Terminal';     
 
 interface LogMessage {
   id: string;
@@ -11,7 +10,8 @@ interface LogMessage {
   timestamp: string;
 }
 
-const MODEL_NAME = 'gemini-2.5-flash-lite';
+const TEXT_MODEL = 'llama-3.3-70b-versatile'; 
+const VISION_MODEL = 'llama-3.2-11b-vision-preview'; 
 
 type Attachment = { file: File; base64: string; };
 
@@ -21,7 +21,6 @@ const App: React.FC = () => {
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
-  // NOVO ESTADO: Controla se o microfone está a ouvir ativamente
   const [isListening, setIsListening] = useState(false);
   const [logs, setLogs] = useState<LogMessage[]>([]);
   const [textInput, setTextInput] = useState('');
@@ -31,7 +30,6 @@ const App: React.FC = () => {
 
   const isMutedRef = useRef(isMuted);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  // NOVA REFERÊNCIA: Guarda a instância do SpeechRecognition
   const recognitionRef = useRef<any>(null);
 
   const questionCount = logs.filter(l => l.source === 'USER').length;
@@ -60,7 +58,6 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // NOVO USEEFFECT: Configuração do Microfone
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (SpeechRecognition) {
@@ -89,11 +86,10 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // DESIGN DO GITHUB: LIGA AUTOMATICAMENTE
   useEffect(() => {
     const startHelios = () => {
         setIsConnecting(true);
-        addLog('SYSTEM', 'A iniciar Projecto IA Helios...');
+        addLog('SYSTEM', 'A iniciar Projecto IA Helios com Motor Groq...');
         setTimeout(() => {
             addLog('SYSTEM', 'Sistema Online.');
             setIsConnected(true);
@@ -108,7 +104,7 @@ const App: React.FC = () => {
     addLog('SYSTEM', 'Sessão terminada.');
     window.speechSynthesis.cancel();
     setIsSpeaking(false);
-    if (isListening) recognitionRef.current?.stop(); // Desliga o mic ao reiniciar
+    if (isListening) recognitionRef.current?.stop(); 
     
     setTimeout(() => {
         setIsConnecting(true);
@@ -158,12 +154,10 @@ const App: React.FC = () => {
       window.speechSynthesis.speak(utterance);
   };
 
-  // NOVA FUNÇÃO: Ligar/Desligar o microfone real
   const toggleMicrophone = () => {
     if (isListening) {
       recognitionRef.current?.stop();
     } else {
-      // Pedimos ao browser para começar a ouvir
       recognitionRef.current?.start();
     }
   };
@@ -176,13 +170,11 @@ const App: React.FC = () => {
     setTextInput('');
     setPendingAttachment(null);
 
-    // --- NOVO COMANDO DE SISTEMA: LIMPAR ---
     if (msg.toLowerCase() === '> limpar' || msg.toLowerCase() === 'clear') {
         setLogs([]);
         addLog('SYSTEM', 'Terminal limpo com sucesso.');
         return;
     }
-    // ---------------------------------------
     
     addLog('USER', msg || `[Ficheiro anexado: ${attachment?.file.name}]`);
     
@@ -193,29 +185,53 @@ const App: React.FC = () => {
 
     try {
         setIsSpeaking(true); 
-        const genAI = new GoogleGenAI({ apiKey: import.meta.env.VITE_GOOGLE_API_KEY });
         
-        const parts: any[] = [];
-        if (msg) parts.push({ text: msg });
+        const messages: any[] = [
+            {
+                role: "system",
+                content: "Tu és o H.E.L.I.O.S., uma Inteligência Artificial avançada desenvolvida por um programador chamado Simão. O teu objetivo é ajudar os utilizadores de forma educada, clara e profissional. Fala sempre num tom normal, prestável e bem educado em Português de Portugal (PT-PT). Não uses gírias. És uma IA e tens orgulho nisso. O teu foco principal é Informática, Programação, mas tens capacidade geral para conversar sobre qualquer assunto. Responde de forma direta e útil."
+            }
+        ];
+
+        // Se houver ficheiro, preparamos o modelo de Visão
         if (attachment) {
-            parts.push({ inlineData: { data: attachment.base64, mimeType: attachment.file.type } });
+            messages.push({
+                role: "user",
+                content: [
+                    { type: "text", text: msg || "Analisa esta imagem/ficheiro detalhadamente." },
+                    { type: "image_url", image_url: { url: `data:${attachment.file.type};base64,${attachment.base64}` } }
+                ]
+            });
+        } else {
+            messages.push({ role: "user", content: msg });
         }
 
-        const response = await genAI.models.generateContent({
-            model: MODEL_NAME,
-            contents: parts,
-            config: {
-              systemInstruction: "Tu és o H.E.L.I.O.S., uma Inteligência Artificial avançada desenvolvida por um programador chamado Simão. O teu objetivo é ajudar os utilizadores de forma educada, clara e profissional. Fala sempre num tom normal, prestável e bem educado em Português de Portugal (PT-PT). Não uses gírias, não chames os utilizadores de 'amigo' constantemente, nem ajas como se fosses um humano num café. És uma IA e tens orgulho nisso. O teu foco principal é Informática, Programação, mas tens capacidade geral para conversar sobre qualquer assunto. Responde de forma direta e útil. Se te perguntarem quem te criou, responde claramente que foi o Simão."
-            }
+        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${import.meta.env.VITE_GROQ_API_KEY}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                model: attachment ? VISION_MODEL : TEXT_MODEL,
+                messages: messages,
+                temperature: 0.7,
+            })
         });
 
-        const replyText = response.text || "Sem resposta.";
+        if (!response.ok) {
+            throw new Error(`Erro Groq: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        const replyText = data.choices[0]?.message?.content || "Sem resposta.";
+        
         addLog('JARVIS', replyText);
         speakText(replyText);
 
     } catch (e: any) { 
-        console.error(e);
-        addLog('ERROR', 'Falha na comunicação.');
+        console.error("Erro completo:", e);
+        addLog('ERROR', 'Falha na comunicação com o Groq.');
         setIsSpeaking(false);
     }
   };
@@ -278,7 +294,6 @@ const App: React.FC = () => {
                                 {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
                             </button>
                             
-                            {/* AQUI ESTÁ A MAGIA NO BOTÃO DO MICROFONE */}
                             <button onClick={toggleMicrophone} className={`p-2 md:p-3 rounded-lg transition-all ${isListening ? 'text-red-500 bg-red-950/20 animate-pulse' : 'text-amber-500 hover:bg-amber-900/20'}`}>
                                 {isListening ? <Mic size={20} /> : <MicOff size={20} />}
                             </button>
