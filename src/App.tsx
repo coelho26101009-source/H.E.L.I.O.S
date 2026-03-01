@@ -3,9 +3,10 @@ import { Mic, MicOff, Send, Calendar, Clock, ShieldCheck, Power, VolumeX, Volume
 import { HeliosCore } from './components/HeliosCore'; 
 import { Terminal } from './components/Terminal';     
 
-// IMPORTAÇÕES DO FIREBASE (NOVO)
+// IMPORTAÇÕES DO FIREBASE
 import { signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
-import { auth, googleProvider } from './firebase';
+import { collection, query, where, orderBy, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, getDoc } from 'firebase/firestore';
+import { auth, googleProvider, db } from './firebase';
 
 interface LogMessage {
   id: string;
@@ -20,10 +21,9 @@ const VISION_MODEL = 'llama-3.2-11b-vision-preview';
 type Attachment = { file: File; base64: string; };
 
 const App: React.FC = () => {
-  // --- ESTADOS DO SISTEMA DE LOGIN ---
-  const [user, setUser] = useState<User | null>(null); // Guarda a info da tua conta Google
+  const [user, setUser] = useState<User | null>(null); 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const isAuthenticated = !!user; // Se houver user, estás autenticado!
+  const isAuthenticated = !!user; 
 
   const [isConnected, setIsConnected] = useState(false);
   const [isMicOn, setIsMicOn] = useState(true);
@@ -31,11 +31,16 @@ const App: React.FC = () => {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  
   const [logs, setLogs] = useState<LogMessage[]>([]);
   const [textInput, setTextInput] = useState('');
   const [currentTime, setCurrentTime] = useState('--:--:--');
   const [currentDate, setCurrentDate] = useState('--/--');
   const [pendingAttachment, setPendingAttachment] = useState<Attachment | null>(null);
+
+  // --- ESTADOS DA MEMÓRIA E CHATS ---
+  const [chatList, setChatList] = useState<{id: string, title: string}[]>([]);
+  const [currentChatId, setCurrentChatId] = useState<string | null>(null);
 
   const isMutedRef = useRef(isMuted);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -43,17 +48,11 @@ const App: React.FC = () => {
 
   const questionCount = logs.filter(l => l.source === 'USER').length;
 
-  const mockChats = [
-    { id: 1, title: "Apoio em React e Tailwind" },
-    { id: 2, title: "Configuração do H.E.L.I.O.S." },
-    { id: 3, title: "Motor do Groq Llama 3" },
-  ];
-
   const addLog = useCallback((source: 'USER' | 'JARVIS' | 'SYSTEM' | 'ERROR', text: string) => {
     setLogs(prev => [...prev, {
       id: Math.random().toString(36).substring(7),
       source, text, timestamp: new Date().toLocaleTimeString('pt-PT', { hour12: false })
-    }].slice(-50));
+    }]);
   }, []);
 
   useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
@@ -68,18 +67,24 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    window.speechSynthesis.onvoiceschanged = () => {
-        window.speechSynthesis.getVoices();
-    };
-  }, []);
-
-  // VIGIA SE ESTÁS LOGADO OU NÃO (Impede que tenhas de fazer login sempre que atualizas a página)
-  useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
     });
     return () => unsubscribe();
   }, []);
+
+  // CARREGAR A LISTA DE CHATS DO UTILIZADOR
+  useEffect(() => {
+    if (!user) {
+        setChatList([]);
+        return;
+    }
+    const q = query(collection(db, 'chats'), where('userId', '==', user.uid), orderBy('updatedAt', 'desc'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+        setChatList(snapshot.docs.map(doc => ({ id: doc.id, title: doc.data().title })));
+    });
+    return () => unsubscribe();
+  }, [user]);
 
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -93,10 +98,7 @@ const App: React.FC = () => {
         const transcript = event.results[0][0].transcript;
         setTextInput(prev => prev + (prev ? ' ' : '') + transcript);
       };
-      recognition.onerror = (event: any) => {
-        console.error('Erro no microfone:', event.error);
-        setIsListening(false);
-      };
+      recognition.onerror = (event: any) => setIsListening(false);
       recognition.onend = () => setIsListening(false);
       recognitionRef.current = recognition;
     }
@@ -104,38 +106,46 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (isAuthenticated) {
-        const startHelios = () => {
-            setIsConnecting(true);
-            addLog('SYSTEM', 'A iniciar Projecto IA Helios com Motor Groq...');
-            setTimeout(() => {
-                addLog('SYSTEM', `Sistema Online. Bem-vindo, ${user?.displayName?.split(' ')[0] || 'Comandante'}.`);
-                setIsConnected(true);
-                setIsConnecting(false);
-            }, 1500);
-        };
-        startHelios();
+        setIsConnecting(true);
+        addLog('SYSTEM', 'A iniciar Projecto IA Helios com Motor Groq...');
+        setTimeout(() => {
+            addLog('SYSTEM', `Sistema Online. Bem-vindo, ${user?.displayName?.split(' ')[0] || 'Comandante'}.`);
+            setIsConnected(true);
+            setIsConnecting(false);
+        }, 1500);
     } else {
         setIsConnected(false);
         setLogs([]);
+        setCurrentChatId(null);
     }
-  }, [isAuthenticated, addLog, user]);
+  }, [isAuthenticated, user]);
 
-  // FUNÇÕES REAIS DE LOGIN E LOGOUT
   const handleLogin = async () => {
-    try {
-      await signInWithPopup(auth, googleProvider);
-    } catch (error) {
-      console.error("Erro ao fazer login:", error);
-      alert("Falha no login. Verifica a consola.");
-    }
+    try { await signInWithPopup(auth, googleProvider); } 
+    catch (error) { console.error("Erro ao fazer login:", error); }
   };
 
   const handleLogout = async () => {
-      try {
-        await signOut(auth);
-        setIsSidebarOpen(false);
-      } catch (error) {
-        console.error("Erro ao terminar sessão:", error);
+      try { await signOut(auth); setIsSidebarOpen(false); } 
+      catch (error) { console.error("Erro ao terminar sessão:", error); }
+  };
+
+  // FUNÇÃO PARA CRIAR UM NOVO CHAT LIMPO
+  const startNewChat = () => {
+      setCurrentChatId(null);
+      setLogs([]);
+      addLog('SYSTEM', 'Sessão de chat limpa. Novo histórico iniciado.');
+      setIsSidebarOpen(false);
+  };
+
+  // FUNÇÃO PARA CARREGAR UM CHAT ANTIGO
+  const loadChatHistory = async (id: string) => {
+      setCurrentChatId(id);
+      setIsSidebarOpen(false);
+      const chatDoc = await getDoc(doc(db, 'chats', id));
+      if (chatDoc.exists()) {
+          setLogs(chatDoc.data().messages || []);
+          addLog('SYSTEM', 'Histórico carregado com sucesso.');
       }
   };
 
@@ -145,7 +155,6 @@ const App: React.FC = () => {
     window.speechSynthesis.cancel();
     setIsSpeaking(false);
     if (isListening) recognitionRef.current?.stop(); 
-    
     setTimeout(() => {
         setIsConnecting(true);
         addLog('SYSTEM', 'A restabelecer ligação...');
@@ -170,10 +179,7 @@ const App: React.FC = () => {
   };
 
   const speakText = (text: string) => {
-      if (isMutedRef.current) {
-          setIsSpeaking(false);
-          return;
-      }
+      if (isMutedRef.current) return;
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(text.replace(/[*#_]/g, ''));
       utterance.lang = 'pt-PT';
@@ -194,37 +200,44 @@ const App: React.FC = () => {
   };
 
   const handleSendMessage = async () => {
-    if ((!textInput.trim() && !pendingAttachment) || isConnecting) return;
+    if ((!textInput.trim() && !pendingAttachment) || isConnecting || !isConnected) return;
     
     const msg = textInput.trim();
     const attachment = pendingAttachment;
     setTextInput('');
     setPendingAttachment(null);
 
-    if (msg.toLowerCase() === '> limpar' || msg.toLowerCase() === 'clear') {
-        setLogs([]);
-        addLog('SYSTEM', 'Terminal limpo com sucesso.');
-        return;
-    }
+    const userLog: LogMessage = {
+        id: Math.random().toString(36).substring(7),
+        source: 'USER',
+        text: msg || `[Ficheiro anexado: ${attachment?.file.name}]`,
+        timestamp: new Date().toLocaleTimeString('pt-PT', { hour12: false })
+    };
     
-    addLog('USER', msg || `[Ficheiro anexado: ${attachment?.file.name}]`);
-    
-    if (!isConnected) { 
-        addLog('ERROR', 'Sem resposta do servidor.');
-        return; 
-    }
+    // Atualiza o ecrã imediatamente
+    const currentLogs = [...logs, userLog];
+    setLogs(currentLogs);
 
     try {
         setIsSpeaking(true); 
-        const messages: any[] = [
+        
+        // 1. CONSTRUIR A MEMÓRIA PARA O GROQ LER
+        const apiMessages: any[] = [
             {
                 role: "system",
                 content: `Tu és o H.E.L.I.O.S., uma Inteligência Artificial avançada desenvolvida pelo Simão. Estás a falar com o utilizador ${user?.displayName || 'Desconhecido'}. Fala sempre num tom educado e em Português de Portugal (PT-PT).`
             }
         ];
 
+        // Injectar histórico (apenas texto)
+        logs.forEach(l => {
+            if (l.source === 'USER') apiMessages.push({ role: 'user', content: l.text });
+            if (l.source === 'JARVIS') apiMessages.push({ role: 'assistant', content: l.text });
+        });
+
+        // Adicionar a nova mensagem
         if (attachment) {
-            messages.push({
+            apiMessages.push({
                 role: "user",
                 content: [
                     { type: "text", text: msg || "Analisa esta imagem/ficheiro detalhadamente." },
@@ -232,7 +245,7 @@ const App: React.FC = () => {
                 ]
             });
         } else {
-            messages.push({ role: "user", content: msg });
+            apiMessages.push({ role: "user", content: msg });
         }
 
         const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -243,7 +256,7 @@ const App: React.FC = () => {
             },
             body: JSON.stringify({
                 model: attachment ? VISION_MODEL : TEXT_MODEL,
-                messages: messages,
+                messages: apiMessages, // O Groq agora recebe as mensagens todas!
                 temperature: 0.7,
             })
         });
@@ -253,55 +266,64 @@ const App: React.FC = () => {
         const data = await response.json();
         const replyText = data.choices[0]?.message?.content || "Sem resposta.";
         
-        addLog('JARVIS', replyText);
+        const jarvisLog: LogMessage = {
+            id: Math.random().toString(36).substring(7),
+            source: 'JARVIS',
+            text: replyText,
+            timestamp: new Date().toLocaleTimeString('pt-PT', { hour12: false })
+        };
+
+        const updatedLogs = [...currentLogs, jarvisLog];
+        setLogs(updatedLogs);
         speakText(replyText);
+
+        // 2. GUARDAR NO FIREBASE (HISTÓRICO)
+        if (!currentChatId) {
+            // Cria um chat novo no cofre
+            const docRef = await addDoc(collection(db, 'chats'), {
+                userId: user?.uid,
+                title: msg.substring(0, 30) || "Nova Conversa",
+                updatedAt: serverTimestamp(),
+                messages: updatedLogs
+            });
+            setCurrentChatId(docRef.id);
+        } else {
+            // Atualiza o chat existente
+            await updateDoc(doc(db, 'chats', currentChatId), {
+                updatedAt: serverTimestamp(),
+                messages: updatedLogs
+            });
+        }
 
     } catch (e: any) { 
         console.error(e);
-        addLog('ERROR', 'Falha na comunicação.');
+        addLog('ERROR', 'Falha na comunicação com o Groq.');
         setIsSpeaking(false);
     }
   };
 
-  // ==========================================
-  // ECRÃ DE LOGIN (VERDADEIRO)
-  // ==========================================
   if (!isAuthenticated) {
       return (
         <div className="flex flex-col h-screen w-full bg-[#020617] items-center justify-center relative font-sans overflow-hidden">
             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-amber-600/10 rounded-full blur-[100px] pointer-events-none animate-pulse"></div>
-            
             <div className="z-10 flex flex-col items-center bg-slate-950/80 p-8 md:p-12 rounded-2xl border border-amber-500/20 backdrop-blur-xl shadow-[0_0_50px_rgba(245,158,11,0.1)] max-w-md w-[90%]">
                 <Cpu size={56} className="text-amber-500 mb-6 drop-shadow-[0_0_15px_rgba(245,158,11,0.8)]" />
                 <h1 className="text-4xl md:text-5xl font-black tracking-widest text-amber-500 drop-shadow-[0_0_15px_rgba(245,158,11,0.5)] uppercase font-['Orbitron'] mb-2">H.E.L.I.O.S.</h1>
                 <p className="text-amber-600/70 text-[10px] md:text-xs uppercase tracking-[0.3em] mb-10 text-center font-bold">Acesso Restrito ao Sistema</p>
-
-                <button 
-                  onClick={handleLogin}
-                  className="w-full py-4 px-6 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/50 rounded-lg text-amber-400 font-bold tracking-widest uppercase transition-all flex items-center justify-center gap-3 hover:shadow-[0_0_20px_rgba(245,158,11,0.3)] hover:scale-105"
-                >
+                <button onClick={handleLogin} className="w-full py-4 px-6 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/50 rounded-lg text-amber-400 font-bold tracking-widest uppercase transition-all flex items-center justify-center gap-3 hover:shadow-[0_0_20px_rgba(245,158,11,0.3)] hover:scale-105">
                    Autenticar com o Google
                 </button>
-            </div>
-            <div className="absolute bottom-6 text-amber-900/40 text-[10px] uppercase tracking-widest font-mono">
-                Projecto IA Helios | Simão
             </div>
         </div>
       );
   }
 
-  // ==========================================
-  // APLICAÇÃO PRINCIPAL
-  // ==========================================
   return (
     <div className="flex flex-col h-screen w-full bg-[#020617] text-amber-500 p-4 md:p-8 lg:p-10 overflow-hidden relative font-sans">
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[300px] md:w-[800px] h-[300px] md:h-[800px] bg-amber-600/5 rounded-full blur-[80px] md:blur-[150px] pointer-events-none opacity-40"></div>
       
-      {isSidebarOpen && (
-          <div className="fixed inset-0 bg-black/60 z-40 backdrop-blur-sm" onClick={() => setIsSidebarOpen(false)} />
-      )}
+      {isSidebarOpen && ( <div className="fixed inset-0 bg-black/60 z-40 backdrop-blur-sm" onClick={() => setIsSidebarOpen(false)} /> )}
 
-      {/* BARRA LATERAL COM A TUA FOTO E NOME */}
       <div className={`fixed top-0 left-0 h-full w-72 bg-[#0a0d1a] border-r border-amber-500/20 z-50 transform transition-transform duration-300 shadow-[20px_0_50px_rgba(0,0,0,0.5)] flex flex-col ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
           <div className="p-5 flex justify-between items-center border-b border-amber-500/10 mb-4">
                <div className="flex items-center gap-2">
@@ -312,34 +334,28 @@ const App: React.FC = () => {
           </div>
 
           <div className="px-4">
-              {/* CARTÃO DE UTILIZADOR */}
               <div className="flex items-center gap-3 mb-6 bg-slate-900/50 p-3 rounded-xl border border-amber-500/20">
-                  {user?.photoURL ? (
-                      <img src={user.photoURL} alt="Perfil" className="w-10 h-10 rounded-full border border-amber-500/50" />
-                  ) : (
-                      <div className="w-10 h-10 rounded-full bg-amber-500/20 flex items-center justify-center border border-amber-500/50 text-amber-500 font-bold">
-                          {user?.displayName?.charAt(0) || 'U'}
-                      </div>
-                  )}
+                  {user?.photoURL ? ( <img src={user.photoURL} alt="Perfil" className="w-10 h-10 rounded-full border border-amber-500/50" /> ) : ( <div className="w-10 h-10 rounded-full bg-amber-500/20 flex items-center justify-center border border-amber-500/50 text-amber-500 font-bold">{user?.displayName?.charAt(0) || 'U'}</div> )}
                   <div className="flex flex-col overflow-hidden">
                       <span className="text-sm font-bold text-amber-400 truncate">{user?.displayName || 'Utilizador'}</span>
                       <span className="text-[10px] text-amber-500/50 truncate">{user?.email}</span>
                   </div>
               </div>
 
-              <button className="w-full py-3 px-4 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 rounded-lg text-amber-400 font-bold text-sm flex items-center justify-center gap-2 transition-all">
+              <button onClick={startNewChat} className="w-full py-3 px-4 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 rounded-lg text-amber-400 font-bold text-sm flex items-center justify-center gap-2 transition-all">
                   <Plus size={16} /> NOVO CHAT
               </button>
           </div>
           
           <div className="flex-1 overflow-y-auto px-3 space-y-1 py-4">
-              <div className="text-[10px] uppercase tracking-widest text-amber-900 font-bold mb-3 px-2">Histórico (Em Breve)</div>
-              {mockChats.map(chat => (
-                  <button key={chat.id} className="w-full text-left p-3 rounded-lg hover:bg-amber-500/5 text-amber-100/70 text-sm flex items-center gap-3 transition-colors border border-transparent hover:border-amber-500/10">
+              <div className="text-[10px] uppercase tracking-widest text-amber-900 font-bold mb-3 px-2">Histórico Guardado</div>
+              {chatList.map(chat => (
+                  <button key={chat.id} onClick={() => loadChatHistory(chat.id)} className={`w-full text-left p-3 rounded-lg flex items-center gap-3 transition-colors border ${currentChatId === chat.id ? 'bg-amber-500/20 border-amber-500/50 text-amber-400' : 'hover:bg-amber-500/5 text-amber-100/70 border-transparent hover:border-amber-500/10'}`}>
                       <MessageSquare size={14} className="opacity-50 shrink-0" />
                       <span className="truncate">{chat.title}</span>
                   </button>
               ))}
+              {chatList.length === 0 && <div className="text-xs text-amber-900/50 px-2 text-center mt-4">Sem histórico.</div>}
           </div>
 
           <div className="p-4 border-t border-amber-500/10 bg-slate-950/50">
