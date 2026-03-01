@@ -21,3 +21,4 @@ export const googleProvider = new GoogleAuthProvider();
 
 // Inicializa a Base de Dados (A Memória)
 export const db = getFirestore(app);
+// Forçar atualização das chaves na Vercel
