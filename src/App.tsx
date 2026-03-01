@@ -238,7 +238,7 @@ const App: React.FC = () => {
         const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
             method: "POST",
             headers: {
-                "Authorization": `Bearer ${import.meta.env.VITE_GROQ_API_KEY}`,
+                "Authorization": `Bearer ${(import.meta as any).env.VITE_GROQ_API_KEY}`,
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
