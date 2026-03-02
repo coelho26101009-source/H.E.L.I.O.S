@@ -338,7 +338,6 @@ const App: React.FC = () => {
                   {user?.photoURL ? ( <img src={user.photoURL} alt="Perfil" className="w-10 h-10 rounded-full border border-amber-500/50" /> ) : ( <div className="w-10 h-10 rounded-full bg-amber-500/20 flex items-center justify-center border border-amber-500/50 text-amber-500 font-bold">{user?.displayName?.charAt(0) || 'U'}</div> )}
                   <div className="flex flex-col overflow-hidden">
                       <span className="text-sm font-bold text-amber-400 truncate">{user?.displayName || 'Utilizador'}</span>
-                      <span className="text-[10px] text-amber-500/50 truncate">{user?.email}</span>
                   </div>
               </div>
 
